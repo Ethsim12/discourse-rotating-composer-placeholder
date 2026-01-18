@@ -11,12 +11,14 @@ export default apiInitializer("1.0", (api) => {
     if (Array.isArray(value)) {
       return value.map((v) => String(v).trim()).filter(Boolean);
     }
+
     if (typeof value === "string") {
       return value
         .split(/\r?\n|,|\|/g)
         .map((s) => s.trim())
         .filter(Boolean);
     }
+
     return [];
   }
 
@@ -32,25 +34,30 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
-  function setProseMirrorPlaceholder(text) {
+  function setProseMirrorRotatingPlaceholder(text) {
     const pmEl = document.querySelector(
       ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
     );
     const p = pmEl?.querySelector("p");
     if (!p) return false;
 
-    p.setAttribute("data-placeholder", text);
+    // Leave Discourse's data-placeholder alone (it will keep resetting it),
+    // but set our own attribute that CSS will display.
+    p.setAttribute("data-rotating-placeholder", text);
+
+    // Optional accessibility
     pmEl.setAttribute("aria-label", text);
+
     return true;
   }
 
   function applyPlaceholderOnce(text) {
     if (setMarkdownPlaceholder(text)) return true;
-    return setProseMirrorPlaceholder(text);
+    return setProseMirrorRotatingPlaceholder(text);
   }
 
   function applyWithRetries(text) {
-    // A few delayed passes only (no observers / intervals)
+    // No observers. Just a few delayed passes for mount timing.
     applyPlaceholderOnce(text);
     setTimeout(() => applyPlaceholderOnce(text), 80);
     setTimeout(() => applyPlaceholderOnce(text), 200);
