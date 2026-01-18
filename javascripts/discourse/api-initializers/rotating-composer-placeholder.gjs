@@ -3,11 +3,6 @@ import { apiInitializer } from "discourse/lib/api";
 export default apiInitializer("1.0", (api) => {
   const FALLBACK = ["Write your reply…"];
 
-  let pmObserver = null;
-  let pmInterval = null;
-  let pmTimeout = null;
-  let pinnedText = null;
-
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
   }
@@ -32,22 +27,6 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  function cleanupRichPin() {
-    if (pmObserver) {
-      pmObserver.disconnect();
-      pmObserver = null;
-    }
-    if (pmInterval) {
-      clearInterval(pmInterval);
-      pmInterval = null;
-    }
-    if (pmTimeout) {
-      clearTimeout(pmTimeout);
-      pmTimeout = null;
-    }
-    pinnedText = null;
-  }
-
   function getProseMirrorEl() {
     return document.querySelector(
       ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
@@ -55,16 +34,21 @@ export default apiInitializer("1.0", (api) => {
   }
 
   function setProseMirrorPlaceholder(text) {
-    const pmEl = document.querySelector(".d-editor .ProseMirror.d-editor-input[contenteditable='true']");
+    const pmEl = getProseMirrorEl();
     const p = pmEl?.querySelector("p");
     if (!p) return false;
+
+    // Visible watermark source in your DOM
     p.setAttribute("data-placeholder", text);
+
+    // Optional accessibility
     pmEl.setAttribute("aria-label", text);
+
     return true;
   }
 
   function applyRichPlaceholderSafely(text) {
-    // try a few delayed passes to beat editor init
+    // A few delayed passes to beat editor init (no observers, no intervals)
     setProseMirrorPlaceholder(text);
     setTimeout(() => setProseMirrorPlaceholder(text), 50);
     setTimeout(() => setProseMirrorPlaceholder(text), 150);
@@ -76,6 +60,7 @@ export default apiInitializer("1.0", (api) => {
   function setMarkdownPlaceholder(text) {
     const el = document.querySelector(".d-editor textarea.d-editor-input");
     if (!el) return false;
+
     el.setAttribute("placeholder", text);
     return true;
   }
@@ -87,11 +72,11 @@ export default apiInitializer("1.0", (api) => {
     // Try markdown first
     if (setMarkdownPlaceholder(text)) return;
 
-    // Otherwise pin rich editor placeholder
-    pinProseMirrorPlaceholder(text);
+    // Otherwise rich editor
+    applyRichPlaceholderSafely(text);
   }
 
-  // Rich editor can mount “after inserted” in a couple of frames; retry lightly.
+  // Rich editor can mount shortly after inserted; retry lightly.
   function applyWithRetries() {
     let tries = 0;
     const maxTries = 10;
@@ -100,8 +85,9 @@ export default apiInitializer("1.0", (api) => {
       tries += 1;
       applyRandomPlaceholder();
 
-      // If neither markdown nor PM exists yet, keep trying briefly
-      const hasMarkdown = !!document.querySelector(".d-editor textarea.d-editor-input");
+      const hasMarkdown = !!document.querySelector(
+        ".d-editor textarea.d-editor-input"
+      );
       const hasPM = !!getProseMirrorEl();
 
       if ((hasMarkdown || hasPM) || tries >= maxTries) return;
@@ -113,7 +99,6 @@ export default apiInitializer("1.0", (api) => {
 
   api.onAppEvent("composer:inserted", () => {
     try {
-      cleanupRichPin();
       applyWithRetries();
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -123,15 +108,10 @@ export default apiInitializer("1.0", (api) => {
 
   api.onAppEvent("composer:reply-reloaded", () => {
     try {
-      cleanupRichPin();
       applyWithRetries();
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn("[rotating-composer-placeholder] failed:", e);
     }
-  });
-
-  api.onAppEvent?.("composer:closed", () => {
-    cleanupRichPin();
   });
 });
