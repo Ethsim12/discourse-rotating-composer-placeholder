@@ -2,12 +2,30 @@ import { apiInitializer } from "discourse/lib/api";
 
 export default apiInitializer("1.0", (api) => {
   const FALLBACK = ["Write your reply…"];
+  let pmObserver = null;
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
-  // Find the editor input once the composer is actually in the DOM
+  function normalizePlaceholders(value) {
+    if (Array.isArray(value)) {
+      return value.map((v) => String(v).trim()).filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value
+        .split(/\r?\n|,|\|/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    return [];
+  }
+
+  function getPlaceholdersFromSettings() {
+    const raw = normalizePlaceholders(settings?.rotating_placeholders);
+    return raw.length ? raw : FALLBACK;
+  }
+
   function findEditorElement() {
     const root = document.querySelector(".d-editor");
     if (!root) return null;
@@ -15,12 +33,47 @@ export default apiInitializer("1.0", (api) => {
     const textarea = root.querySelector("textarea.d-editor-input");
     if (textarea) return { kind: "textarea", el: textarea, root };
 
-    const rich = root.querySelector(".ProseMirror.d-editor-input[contenteditable='true']");
-    if (rich) return { kind: "rich", el: rich, root };
+    const pm = root.querySelector(
+      ".ProseMirror.d-editor-input[contenteditable='true']"
+    );
+    if (pm) return { kind: "prosemirror", el: pm, root };
 
     return null;
   }
 
+  function applyProseMirrorPlaceholder(pmEl, text) {
+    // Set on the ProseMirror root too (some CSS reads from here)
+    pmEl.setAttribute("data-placeholder", text);
+    pmEl.setAttribute("aria-label", text);
+
+    // ProseMirror/Discourse uses <p data-placeholder="..."> for the visible watermark
+    const p =
+      pmEl.querySelector("p.is-empty[data-placeholder]") ||
+      pmEl.querySelector("p[data-placeholder]") ||
+      pmEl.querySelector("p");
+
+    if (p) p.setAttribute("data-placeholder", text);
+  }
+
+  function ensureProseMirrorObserver(pmEl, text) {
+    if (pmObserver) pmObserver.disconnect();
+
+    pmObserver = new MutationObserver(() => {
+      applyProseMirrorPlaceholder(pmEl, text);
+    });
+
+    pmObserver.observe(pmEl, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-placeholder", "class"],
+    });
+
+    // Apply immediately + a couple of delayed passes during editor init
+    applyProseMirrorPlaceholder(pmEl, text);
+    setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 150);
+    setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 500);
+  }
 
   function setComposerPlaceholder(text) {
     const found = findEditorElement();
@@ -31,22 +84,14 @@ export default apiInitializer("1.0", (api) => {
       return true;
     }
 
-    // Rich editor (ProseMirror)
-    // 1) Update the <p data-placeholder="..."> node that ProseMirror uses
-    const p = found.el.querySelector("p[data-placeholder]") || found.el.querySelector("p");
-    if (p) {
-      p.setAttribute("data-placeholder", text);
+    if (found.kind === "prosemirror") {
+      ensureProseMirrorObserver(found.el, text);
+      return true;
     }
-  
-    // 2) Also keep accessibility label up to date
-    found.el.setAttribute("aria-label", text);
 
-    return true;
+    return false;
   }
 
-
-
-  // Keep retries as a fallback, but with composer:inserted we usually don't need many
   function setComposerPlaceholderWithRetries(text) {
     let tries = 0;
     const maxTries = 15;
@@ -54,58 +99,19 @@ export default apiInitializer("1.0", (api) => {
 
     const attempt = () => {
       tries += 1;
-
       const ok = setComposerPlaceholder(text);
-
-      // eslint-disable-next-line no-console
-      console.log(
-        `[rotating-composer-placeholder] try ${tries} ok=${ok} hasComposer=${!!document.querySelector(".composer")}`
-      );
-
-
       if (ok) return;
       if (tries < maxTries) setTimeout(attempt, delayMs);
     };
 
     attempt();
-
-    // extra “win” passes in case the editor re-renders shortly after insertion
-    setTimeout(() => setComposerPlaceholder(text), 250);
-    setTimeout(() => setComposerPlaceholder(text), 800);
-  }
-
-  function normalizePlaceholders(value) {
-    if (Array.isArray(value)) {
-      return value.map((v) => String(v).trim()).filter(Boolean);
-    }
-
-    if (typeof value === "string") {
-      return value
-        .split(/\r?\n|,|\|/g) // newline, comma, or pipe
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-
-    return [];
-  }
-
-  function getPlaceholdersFromSettings() {
-    const raw = normalizePlaceholders(settings?.rotating_placeholders);
-    return raw.length ? raw : FALLBACK;
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     setComposerPlaceholderWithRetries(pickRandom(placeholders));
-
-    // eslint-disable-next-line no-console
-    console.log(
-      "[rotating-composer-placeholder] applied, settings:",
-      settings?.rotating_placeholders
-    );
   }
 
-  // IMPORTANT: composer:opened can fire before the DOM exists in 2026.x
   api.onAppEvent("composer:inserted", () => {
     try {
       applyRandomPlaceholder();
@@ -115,13 +121,20 @@ export default apiInitializer("1.0", (api) => {
     }
   });
 
-  // Keep as a fallback for certain flows
   api.onAppEvent("composer:reply-reloaded", () => {
     try {
       applyRandomPlaceholder();
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn("[rotating-composer-placeholder] failed:", e);
+    }
+  });
+
+  // Optional cleanup if the event exists on your build
+  api.onAppEvent?.("composer:closed", () => {
+    if (pmObserver) {
+      pmObserver.disconnect();
+      pmObserver = null;
     }
   });
 });
