@@ -1,0 +1,4 @@
+rotating_placeholders:
+  default: "What did you try?\nOne idea per reply.\nInclude steps to reproduce."
+  type: list
+  list_type: simple
