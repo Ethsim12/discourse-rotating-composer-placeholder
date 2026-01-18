@@ -1,11 +1,12 @@
 import { apiInitializer } from "discourse/lib/api";
 
 export default apiInitializer("1.0", (api) => {
-  const FALLBACK = ["Write your reply…"];
+  document.documentElement.setAttribute(
+    "data-rotating-composer-placeholder-loaded",
+    "1"
+  );
 
-  // keep one observer per page lifetime
-  let pmObserver = null;
-  let pmObserverStopTimer = null;
+  const FALLBACK = ["Write your reply…"];
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
@@ -15,14 +16,12 @@ export default apiInitializer("1.0", (api) => {
     if (Array.isArray(value)) {
       return value.map((v) => String(v).trim()).filter(Boolean);
     }
-
     if (typeof value === "string") {
       return value
-        .split(/\r?\n|,|\|/g) // newline, comma, or pipe
+        .split(/\r?\n|,|\|/g)
         .map((s) => s.trim())
         .filter(Boolean);
     }
-
     return [];
   }
 
@@ -31,124 +30,55 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  function cleanupProseMirrorPin() {
-    if (pmObserver) {
-      pmObserver.disconnect();
-      pmObserver = null;
-    }
-    if (pmObserverStopTimer) {
-      clearTimeout(pmObserverStopTimer);
-      pmObserverStopTimer = null;
-    }
-  }
-
-  // ---------------- Markdown (textarea) ----------------
+  // ---------- Markdown ----------
   function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
-
     els.forEach((el) => el.setAttribute("placeholder", text));
     return true;
   }
 
-  // ---------------- Rich Text (ProseMirror) ----------------
-  function isProseMirrorEmpty(pmEl) {
-    // ProseMirror is "empty" when it contains only the trailing break / empty paragraph
-    // This is conservative and avoids pinning while user has content.
+  // ---------- Rich (ProseMirror) ----------
+  function proseMirrorIsEmpty(pmEl) {
     const txt = (pmEl.textContent || "").replace(/\u200B/g, "").trim();
     return txt.length === 0;
   }
 
   function setProseMirrorPlaceholder(text) {
-    const pmEl = document.querySelector(
-      ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
-    );
+    const pmEl = document.querySelector(".ProseMirror.d-editor-input");
     if (!pmEl) return false;
 
-    // Only pin while empty; otherwise leave it alone
-    if (!isProseMirrorEmpty(pmEl)) return true;
+    // Only touch it while empty to avoid fighting editor updates
+    if (!proseMirrorIsEmpty(pmEl)) return true;
 
-    // Discourse’s visible watermark comes from the existing attribute:
-    // <p data-placeholder="...">
-    const p =
-      pmEl.querySelector("p[data-placeholder]") ||
-      pmEl.querySelector("p") ||
-      null;
-
+    const p = pmEl.querySelector("p[data-placeholder]") || pmEl.querySelector("p");
     if (!p) return false;
 
-    // Overwrite the *existing* attribute Discourse CSS already reads.
+    // Overwrite the actual attribute Discourse uses
     p.setAttribute("data-placeholder", text);
-
-    // accessibility
     pmEl.setAttribute("aria-label", text);
 
-    return true;
+    return p.getAttribute("data-placeholder") === text;
   }
 
-  function ensureProseMirrorPinned(text) {
-    cleanupProseMirrorPin();
+  // Run a bounded set of attempts (no loops, no observers)
+  function applyOncePerOpen(text) {
+    // always do markdown; harmless if hidden
+    setMarkdownPlaceholder(text);
 
-    // Apply immediately + a couple of delayed passes to beat late init/toggles
-    setProseMirrorPlaceholder(text);
-    setTimeout(() => setProseMirrorPlaceholder(text), 50);
-    setTimeout(() => setProseMirrorPlaceholder(text), 150);
-    setTimeout(() => setProseMirrorPlaceholder(text), 400);
-
-    const pmEl = document.querySelector(
-      ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
-    );
-    if (!pmEl) return;
-
-    // Re-apply if Discourse/PM re-writes placeholder during mount/toggle.
-    pmObserver = new MutationObserver(() => {
-      // stop pinning once user types something
-      if (!isProseMirrorEmpty(pmEl)) {
-        cleanupProseMirrorPin();
-        return;
-      }
-      setProseMirrorPlaceholder(text);
-    });
-
-    pmObserver.observe(pmEl, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["class", "data-placeholder"],
-    });
-
-    // hard stop so we never keep observers around forever
-    pmObserverStopTimer = setTimeout(() => cleanupProseMirrorPin(), 5000);
+    // do rich: a few delayed attempts to catch late mount, then stop
+    const delays = [0, 80, 180, 350, 700, 1200, 2000];
+    delays.forEach((d) => setTimeout(() => setProseMirrorPlaceholder(text), d));
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
-
-    // markdown is cheap and safe
-    setMarkdownPlaceholder(text);
-
-    // rich text needs pinning (but bounded + auto-disconnect)
-    ensureProseMirrorPinned(text);
+    applyOncePerOpen(text);
   }
 
-  // In 2026.x, "opened" may happen before the editor DOM exists,
-  // so schedule a few attempts (very small number).
-  function scheduleApply() {
-    setTimeout(applyRandomPlaceholder, 0);
-    setTimeout(applyRandomPlaceholder, 120);
-    setTimeout(applyRandomPlaceholder, 450);
-  }
-
-  api.onAppEvent("composer:inserted", scheduleApply);
-  api.onAppEvent("composer:reply-reloaded", scheduleApply);
-  api.onAppEvent("composer:opened", scheduleApply);
-
-  api.onAppEvent?.("composer:closed", () => {
-    cleanupProseMirrorPin();
-  });
-
-  api.onPageChange(() => {
-    cleanupProseMirrorPin();
-  });
+  api.onAppEvent("composer:opened", applyRandomPlaceholder);
+  api.onAppEvent("composer:inserted", applyRandomPlaceholder);
+  api.onAppEvent("composer:reply-reloaded", applyRandomPlaceholder);
+  api.onPageChange(applyRandomPlaceholder);
 });
