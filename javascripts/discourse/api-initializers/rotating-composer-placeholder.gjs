@@ -22,6 +22,9 @@ export default apiInitializer("1.0", (api) => {
   let originals = null;
   let lastApplied = null;
 
+  // Track one in-flight pin job so we don't stack timers on repeated events
+  let richPinTimer = null;
+
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
   }
@@ -107,37 +110,70 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
-  // ---- Rich editor DOM sync (ONE-OFF, bounded) ----
-  function syncMountedRichPlaceholder(text) {
-    const p = document.querySelector(
+  // ---- Rich editor pinning ----
+  function getRichPlaceholderNode() {
+    return document.querySelector(
       ".d-editor .ProseMirror.d-editor-input p[data-placeholder]"
     );
-    if (p) {
-      p.setAttribute("data-placeholder", text);
-    }
+  }
+
+  function setRichPlaceholderNow(text) {
+    const p = getRichPlaceholderNode();
+    if (!p) return false;
+
+    p.setAttribute("data-placeholder", text);
 
     const pm = document.querySelector(".d-editor .ProseMirror.d-editor-input");
-    if (pm) {
-      pm.setAttribute("aria-label", text);
+    if (pm) pm.setAttribute("aria-label", text);
+
+    return p.getAttribute("data-placeholder") === text;
+  }
+
+  // Bounded “late win” to beat ProseMirror/Discourse overwrites.
+  // Runs at most ~3s, stops immediately once it sticks.
+  function pinRichPlaceholder(text) {
+    if (richPinTimer) {
+      clearTimeout(richPinTimer);
+      richPinTimer = null;
     }
 
-    return !!p;
+    let tries = 0;
+    const maxTries = 40; // 40 * 80ms ~= 3.2s
+    const delayMs = 80;
+
+    const tick = () => {
+      tries += 1;
+
+      // If the node doesn't exist yet, or Discourse overwrote it, keep trying
+      const ok = setRichPlaceholderNow(text);
+      if (ok) {
+        richPinTimer = null;
+        return;
+      }
+
+      if (tries < maxTries) {
+        richPinTimer = setTimeout(tick, delayMs);
+      } else {
+        richPinTimer = null;
+      }
+    };
+
+    // Start immediately
+    tick();
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // 1) Update sources (future mounts)
+    // 1) Override sources for any future mount
     applyI18nOverride(text);
 
-    // 2) Markdown (current DOM)
+    // 2) Markdown (works already)
     setMarkdownPlaceholder(text);
 
-    // 3) Rich (current DOM) — do a couple of bounded passes
-    // so we catch the moment ProseMirror inserts the <p data-placeholder>
-    const delays = [0, 120, 350, 800];
-    delays.forEach((d) => setTimeout(() => syncMountedRichPlaceholder(text), d));
+    // 3) Rich: keep winning for a short bounded time
+    pinRichPlaceholder(text);
   }
 
   function scheduleApply() {
@@ -146,10 +182,19 @@ export default apiInitializer("1.0", (api) => {
     setTimeout(applyRandomPlaceholder, 500);
   }
 
+  function cleanup() {
+    if (richPinTimer) {
+      clearTimeout(richPinTimer);
+      richPinTimer = null;
+    }
+    restoreI18n();
+  }
+
   api.onAppEvent("composer:opened", scheduleApply);
   api.onAppEvent("composer:inserted", scheduleApply);
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
 
-  api.onAppEvent?.("composer:closed", restoreI18n);
-  api.onPageChange(() => restoreI18n());
+  api.onAppEvent?.("composer:closed", cleanup);
+  api.onPageChange(() => cleanup());
 });
+
