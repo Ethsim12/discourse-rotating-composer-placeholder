@@ -9,6 +9,8 @@ export default apiInitializer("1.0", (api) => {
   const FALLBACK = ["Write your reply…"];
 
   let pmObserver = null;
+  let pmWaitObserver = null;
+  let pmWaitTimeout = null;
   let pinnedText = null;
 
   function pickRandom(arr) {
@@ -43,6 +45,7 @@ export default apiInitializer("1.0", (api) => {
 
   // ---------- Rich (ProseMirror) ----------
   function findProseMirrorRoot() {
+    // Don’t over-specify – your DOM confirms this exact class exists
     return document.querySelector(".ProseMirror.d-editor-input");
   }
 
@@ -53,63 +56,115 @@ export default apiInitializer("1.0", (api) => {
     const p = pm.querySelector("p[data-placeholder]") || pm.querySelector("p");
     if (!p) return false;
 
-    // overwrite the actual attribute Discourse uses for the watermark
-    p.setAttribute("data-placeholder", text);
-    pm.setAttribute("aria-label", text);
+    // overwrite the REAL attribute Discourse uses for the watermark
+    if (p.getAttribute("data-placeholder") !== text) {
+      p.setAttribute("data-placeholder", text);
+    }
+
+    // a11y label is safe on the root (and we know it sticks)
+    if (pm.getAttribute("aria-label") !== text) {
+      pm.setAttribute("aria-label", text);
+    }
 
     return p.getAttribute("data-placeholder") === text;
   }
 
-  function cleanupObserver() {
+  function cleanupRichPin() {
     if (pmObserver) {
       pmObserver.disconnect();
       pmObserver = null;
     }
+    if (pmWaitObserver) {
+      pmWaitObserver.disconnect();
+      pmWaitObserver = null;
+    }
+    if (pmWaitTimeout) {
+      clearTimeout(pmWaitTimeout);
+      pmWaitTimeout = null;
+    }
     pinnedText = null;
   }
 
-  function pinProseMirrorPlaceholder(text) {
-    pinnedText = text;
+  function attachPmObserver(pmEl) {
+    if (pmObserver) pmObserver.disconnect();
 
-    const pm = findProseMirrorRoot();
-    if (!pm) return;
-
-    // Apply immediately + a few delayed passes during mount
-    applyProseMirrorPlaceholder(text);
-    setTimeout(() => applyProseMirrorPlaceholder(text), 50);
-    setTimeout(() => applyProseMirrorPlaceholder(text), 150);
-    setTimeout(() => applyProseMirrorPlaceholder(text), 500);
-    setTimeout(() => applyProseMirrorPlaceholder(text), 1200);
-
-    // Observe only the ProseMirror root while composer is open
-    cleanupObserver();
     pmObserver = new MutationObserver(() => {
       if (pinnedText) applyProseMirrorPlaceholder(pinnedText);
     });
 
-    pmObserver.observe(pm, {
+    pmObserver.observe(pmEl, {
       subtree: true,
       childList: true,
       attributes: true,
+      // Discourse/PM may rewrite class + data-placeholder repeatedly
       attributeFilter: ["data-placeholder", "class"],
     });
+
+    // Apply immediately once observer is attached
+    if (pinnedText) {
+      applyProseMirrorPlaceholder(pinnedText);
+      setTimeout(() => applyProseMirrorPlaceholder(pinnedText), 50);
+      setTimeout(() => applyProseMirrorPlaceholder(pinnedText), 150);
+      setTimeout(() => applyProseMirrorPlaceholder(pinnedText), 500);
+    }
+  }
+
+  function waitForProseMirrorAndPin(text) {
+    pinnedText = text;
+
+    // Try immediately
+    const now = findProseMirrorRoot();
+    if (now) {
+      attachPmObserver(now);
+      return;
+    }
+
+    // Otherwise wait briefly for PM to mount, then attach
+    if (pmWaitObserver) pmWaitObserver.disconnect();
+
+    pmWaitObserver = new MutationObserver(() => {
+      const pm = findProseMirrorRoot();
+      if (!pm) return;
+
+      // Found it — stop waiting and attach the real observer
+      pmWaitObserver.disconnect();
+      pmWaitObserver = null;
+
+      attachPmObserver(pm);
+    });
+
+    pmWaitObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Hard stop so we never “watch forever”
+    if (pmWaitTimeout) clearTimeout(pmWaitTimeout);
+    pmWaitTimeout = setTimeout(() => {
+      if (pmWaitObserver) {
+        pmWaitObserver.disconnect();
+        pmWaitObserver = null;
+      }
+      pmWaitTimeout = null;
+    }, 5000);
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // markdown (works already)
+    // Markdown still works
     setMarkdownPlaceholder(text);
 
-    // rich (pin it)
-    pinProseMirrorPlaceholder(text);
+    // Rich: wait until PM exists, then pin
+    waitForProseMirrorAndPin(text);
   }
 
   function scheduleApply() {
     setTimeout(applyRandomPlaceholder, 0);
     setTimeout(applyRandomPlaceholder, 100);
     setTimeout(applyRandomPlaceholder, 400);
+    setTimeout(applyRandomPlaceholder, 1200); // extra late pass for PM mount
   }
 
   api.onAppEvent("composer:opened", scheduleApply);
@@ -117,6 +172,5 @@ export default apiInitializer("1.0", (api) => {
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
   api.onPageChange(scheduleApply);
 
-  // Cleanup (event may or may not exist; safe optional chaining)
-  api.onAppEvent?.("composer:closed", cleanupObserver);
+  api.onAppEvent?.("composer:closed", cleanupRichPin);
 });
