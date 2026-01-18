@@ -2,7 +2,6 @@ import { apiInitializer } from "discourse/lib/api";
 import I18n from "I18n";
 
 export default apiInitializer("1.0", (api) => {
-  // PROOF this file is loaded (remove later)
   document.documentElement.setAttribute(
     "data-rotating-composer-placeholder-loaded",
     "1"
@@ -10,18 +9,17 @@ export default apiInitializer("1.0", (api) => {
 
   const FALLBACK = ["Write your reply…"];
 
-  // Keys we will override at runtime
   const KEYS = [
-    // Markdown composer (your earlier discovery)
+    // Markdown composer
     "composer.reply_placeholder",
     "js.composer.reply_placeholder",
 
-    // Rich Text Editor (your new discovery)
+    // Rich text editor (RTE)
     "js.composer.reply_placeholder_rte",
     "js.composer.reply_placeholder_rte_no_images",
   ];
 
-  let originals = null; // { key: originalString }
+  let originals = null;
   let lastApplied = null;
 
   function pickRandom(arr) {
@@ -86,10 +84,7 @@ export default apiInitializer("1.0", (api) => {
     if (lastApplied === text) return;
 
     const root = localeRoot();
-
-    Object.keys(originals).forEach((k) => {
-      setDeep(root, k, text);
-    });
+    Object.keys(originals).forEach((k) => setDeep(root, k, text));
 
     lastApplied = text;
   }
@@ -104,7 +99,7 @@ export default apiInitializer("1.0", (api) => {
     lastApplied = null;
   }
 
-  // ---- Markdown textarea (still helps when markdown composer is used) ----
+  // ---- Markdown textarea ----
   function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
@@ -112,23 +107,43 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
+  // ---- Rich editor DOM sync (ONE-OFF, bounded) ----
+  function syncMountedRichPlaceholder(text) {
+    const p = document.querySelector(
+      ".d-editor .ProseMirror.d-editor-input p[data-placeholder]"
+    );
+    if (p) {
+      p.setAttribute("data-placeholder", text);
+    }
+
+    const pm = document.querySelector(".d-editor .ProseMirror.d-editor-input");
+    if (pm) {
+      pm.setAttribute("aria-label", text);
+    }
+
+    return !!p;
+  }
+
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // Update translation sources (rich + markdown keys)
+    // 1) Update sources (future mounts)
     applyI18nOverride(text);
 
-    // Also set textarea placeholder directly (markdown mode)
+    // 2) Markdown (current DOM)
     setMarkdownPlaceholder(text);
+
+    // 3) Rich (current DOM) — do a couple of bounded passes
+    // so we catch the moment ProseMirror inserts the <p data-placeholder>
+    const delays = [0, 120, 350, 800];
+    delays.forEach((d) => setTimeout(() => syncMountedRichPlaceholder(text), d));
   }
 
-  // A few bounded passes to catch mount/toggle; then stop.
   function scheduleApply() {
     setTimeout(applyRandomPlaceholder, 0);
     setTimeout(applyRandomPlaceholder, 150);
     setTimeout(applyRandomPlaceholder, 500);
-    setTimeout(applyRandomPlaceholder, 1200);
   }
 
   api.onAppEvent("composer:opened", scheduleApply);
