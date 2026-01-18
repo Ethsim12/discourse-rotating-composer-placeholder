@@ -1,5 +1,8 @@
 rotating_placeholders:
-  default: "What did you try?\nOne idea per reply.\nInclude steps to reproduce."
+  default:
+    - "What did you try? Include steps to reproduce."
+    - "One idea per reply — start a new topic for new issues."
+    - "Please include expected vs actual behaviour."
   type: list
   list_type: simple
   description: |
