@@ -1,0 +1,5 @@
+// Rich editor (ProseMirror) placeholder override:
+// Discourse writes p[data-placeholder], but we display our own attribute instead.
+.d-editor .ProseMirror.d-editor-input p[data-placeholder]::before {
+  content: attr(data-rotating-placeholder) !important;
+}
