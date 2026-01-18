@@ -27,6 +27,7 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
+  // ---- Markdown ----
   function setMarkdownPlaceholder(text) {
     const el = document.querySelector(".d-editor textarea.d-editor-input");
     if (!el) return false;
@@ -34,25 +35,24 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
+  // ---- Rich (ProseMirror) ----
   function setProseMirrorRotatingPlaceholder(text) {
     const pmEl = document.querySelector(
       ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
     );
     if (!pmEl) return false;
 
-    // ProseMirror may not have created the first paragraph yet
     const p = pmEl.querySelector("p");
     if (!p) return false;
 
+    // Do NOT fight data-placeholder (Discourse will reset it).
+    // Instead set our own attribute that CSS will display.
     p.setAttribute("data-rotating-placeholder", text);
+
+    // Optional accessibility
     pmEl.setAttribute("aria-label", text);
+
     return true;
-  }
-
-
-  function applyPlaceholderOnce(text) {
-    if (setMarkdownPlaceholder(text)) return true;
-    return setProseMirrorRotatingPlaceholder(text);
   }
 
   function applyRichWithRetries(text) {
@@ -62,7 +62,6 @@ export default apiInitializer("1.0", (api) => {
 
     const tick = () => {
       tries += 1;
-
       if (setProseMirrorRotatingPlaceholder(text)) return;
       if (tries < maxTries) setTimeout(tick, delayMs);
     };
@@ -70,15 +69,20 @@ export default apiInitializer("1.0", (api) => {
     tick();
   }
 
-
-  function applyWithRetries(text) {
-    // markdown attempt
+  function applyPlaceholder(text) {
+    // Prefer markdown if present
     if (setMarkdownPlaceholder(text)) return;
 
-    // rich attempt (wait until <p> exists)
+    // Otherwise rich
     applyRichWithRetries(text);
   }
 
+  // ✅ This function MUST exist because your event handler calls it
+  function applyRandomPlaceholder() {
+    const placeholders = getPlaceholdersFromSettings();
+    const text = pickRandom(placeholders);
+    applyPlaceholder(text);
+  }
 
   api.onAppEvent("composer:inserted", () => {
     try {
