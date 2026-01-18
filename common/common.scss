@@ -23,5 +23,13 @@
   content: attr(data-placeholder) !important;
 }
 
+.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child::before {
+  content: attr(data-rotating-placeholder) !important;
+}
+.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child:not([data-rotating-placeholder])::before {
+  content: attr(data-placeholder) !important;
+}
+
+
 
 
