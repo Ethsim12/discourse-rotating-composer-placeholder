@@ -55,41 +55,47 @@ export default apiInitializer("1.0", (api) => {
     setTimeout(() => setMarkdownPlaceholderOnce(text), 1200);
   }
 
-  // Rich (ProseMirror) — write ONLY to the root, not <p>
-  function setProseMirrorRootPlaceholderOnce(text) {
+  // Rich (ProseMirror) — update the *real* placeholder attribute on <p>
+  function setProseMirrorPlaceholderOnce(text) {
     const pmRoots = Array.from(
       document.querySelectorAll(".ProseMirror.d-editor-input")
     );
     if (!pmRoots.length) return false;
 
+    let ok = false;
+
     pmRoots.forEach((pmEl) => {
       pmEl.setAttribute("data-rcp-root", "1");
-      pmEl.setAttribute("data-rotating-placeholder", text); // <-- on root
+
+      const p = pmEl.querySelector("p[data-placeholder]") || pmEl.querySelector("p");
+      if (!p) return;
+
+      // Overwrite the actual placeholder attribute Discourse displays
+      p.setAttribute("data-placeholder", text);
       pmEl.setAttribute("aria-label", text);
+
+      if (p.getAttribute("data-placeholder") === text) ok = true;
     });
 
-    // verify at least one stuck
-    return pmRoots.some(
-      (pmEl) => pmEl.getAttribute("data-rotating-placeholder") === text
-    );
+    return ok;
   }
 
   function applyRichWithRetries(text) {
     let tries = 0;
-    const maxTries = 60;
+    const maxTries = 80; // ~6.4s
     const delayMs = 80;
 
     const tick = () => {
       tries += 1;
-      if (setProseMirrorRootPlaceholderOnce(text)) return;
+      if (setProseMirrorPlaceholderOnce(text)) return;
       if (tries < maxTries) setTimeout(tick, delayMs);
     };
 
     tick();
-    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 150);
-    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 500);
-    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 1200);
-    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 2500);
+    setTimeout(() => setProseMirrorPlaceholderOnce(text), 150);
+    setTimeout(() => setProseMirrorPlaceholderOnce(text), 500);
+    setTimeout(() => setProseMirrorPlaceholderOnce(text), 1200);
+    setTimeout(() => setProseMirrorPlaceholderOnce(text), 2500);
   }
 
   function applyRandomPlaceholder() {
