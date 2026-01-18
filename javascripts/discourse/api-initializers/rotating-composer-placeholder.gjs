@@ -12,12 +12,14 @@ export default apiInitializer("1.0", (api) => {
     if (Array.isArray(value)) {
       return value.map((v) => String(v).trim()).filter(Boolean);
     }
+
     if (typeof value === "string") {
       return value
         .split(/\r?\n|,|\|/g)
         .map((s) => s.trim())
         .filter(Boolean);
     }
+
     return [];
   }
 
@@ -30,49 +32,57 @@ export default apiInitializer("1.0", (api) => {
     const root = document.querySelector(".d-editor");
     if (!root) return null;
 
+    // Markdown editor
     const textarea = root.querySelector("textarea.d-editor-input");
-    if (textarea) return { kind: "textarea", el: textarea, root };
+    if (textarea) return { kind: "textarea", el: textarea };
 
+    // Rich editor (ProseMirror)
     const pm = root.querySelector(
       ".ProseMirror.d-editor-input[contenteditable='true']"
     );
-    if (pm) return { kind: "prosemirror", el: pm, root };
+    if (pm) return { kind: "prosemirror", el: pm };
 
     return null;
   }
 
   function applyProseMirrorPlaceholder(pmEl, text) {
-    // Set on the ProseMirror root too (some CSS reads from here)
+    // Root attributes (accessibility + some themes)
     pmEl.setAttribute("data-placeholder", text);
     pmEl.setAttribute("aria-label", text);
 
-    // ProseMirror/Discourse uses <p data-placeholder="..."> for the visible watermark
+    // Visible watermark lives on the first paragraph
     const p =
       pmEl.querySelector("p.is-empty[data-placeholder]") ||
       pmEl.querySelector("p[data-placeholder]") ||
       pmEl.querySelector("p");
 
-    if (p) p.setAttribute("data-placeholder", text);
+    if (p) {
+      p.setAttribute("data-placeholder", text);
+    }
   }
 
   function ensureProseMirrorObserver(pmEl, text) {
     if (pmObserver) pmObserver.disconnect();
 
     pmObserver = new MutationObserver(() => {
-      applyProseMirrorPlaceholder(pmEl, text);
+      const p = pmEl.querySelector("p");
+      if (p && p.getAttribute("data-placeholder") !== text) {
+        p.setAttribute("data-placeholder", text);
+      }
     });
 
+    // Watch the editor subtree because ProseMirror recreates nodes
     pmObserver.observe(pmEl, {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["data-placeholder", "class"],
     });
 
-    // Apply immediately + a couple of delayed passes during editor init
+    // Initial + delayed applications to beat editor init
     applyProseMirrorPlaceholder(pmEl, text);
     setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 150);
     setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 500);
+    setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 1200);
   }
 
   function setComposerPlaceholder(text) {
@@ -130,7 +140,6 @@ export default apiInitializer("1.0", (api) => {
     }
   });
 
-  // Optional cleanup if the event exists on your build
   api.onAppEvent?.("composer:closed", () => {
     if (pmObserver) {
       pmObserver.disconnect();
