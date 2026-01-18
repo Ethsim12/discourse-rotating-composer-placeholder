@@ -1,4 +1,5 @@
 import { apiInitializer } from "discourse/lib/api";
+import I18n from "I18n";
 
 export default apiInitializer("1.0", (api) => {
   document.documentElement.setAttribute(
@@ -7,6 +8,9 @@ export default apiInitializer("1.0", (api) => {
   );
 
   const FALLBACK = ["Write your reply…"];
+
+  let originalPlaceholder = null;
+  let lastApplied = null;
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
@@ -30,7 +34,7 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---------- Markdown ----------
+  // Markdown still set directly (works)
   function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
@@ -38,47 +42,80 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
-  // ---------- Rich (ProseMirror) ----------
-  function proseMirrorIsEmpty(pmEl) {
-    const txt = (pmEl.textContent || "").replace(/\u200B/g, "").trim();
-    return txt.length === 0;
+  // ---- Rich editor uses an i18n key for its placeholder text ----
+  // We override it temporarily.
+  //
+  // NOTE: key name can vary. We try a few known candidates.
+  const PLACEHOLDER_KEYS = [
+    "composer.placeholder", // common pattern
+    "composer.reply_placeholder", // classic js.composer.reply_placeholder equivalent
+    "js.composer.reply_placeholder", // site text key you referenced earlier
+    "composer.composer_placeholder", // fallback candidate
+  ];
+
+  function findFirstExistingKey() {
+    for (const k of PLACEHOLDER_KEYS) {
+      const v = I18n.t(k, { defaultValue: null });
+      if (v && typeof v === "string" && v.length) return k;
+    }
+    return null;
   }
 
-  function setProseMirrorPlaceholder(text) {
-    const pmEl = document.querySelector(".ProseMirror.d-editor-input");
-    if (!pmEl) return false;
+  const placeholderKey = findFirstExistingKey();
 
-    // Only touch it while empty to avoid fighting editor updates
-    if (!proseMirrorIsEmpty(pmEl)) return true;
+  function applyRichPlaceholder(text) {
+    if (!placeholderKey) return false;
 
-    const p = pmEl.querySelector("p[data-placeholder]") || pmEl.querySelector("p");
-    if (!p) return false;
+    if (originalPlaceholder === null) {
+      originalPlaceholder = I18n.t(placeholderKey);
+    }
 
-    // Overwrite the actual attribute Discourse uses
-    p.setAttribute("data-placeholder", text);
-    pmEl.setAttribute("aria-label", text);
+    // Avoid repeated writes
+    if (lastApplied === text) return true;
 
-    return p.getAttribute("data-placeholder") === text;
+    // Override translation lookup
+    I18n.translations[I18n.currentLocale()][placeholderKey] = text;
+    lastApplied = text;
+
+    return true;
   }
 
-  // Run a bounded set of attempts (no loops, no observers)
-  function applyOncePerOpen(text) {
-    // always do markdown; harmless if hidden
-    setMarkdownPlaceholder(text);
+  function restoreRichPlaceholder() {
+    if (!placeholderKey) return;
 
-    // do rich: a few delayed attempts to catch late mount, then stop
-    const delays = [0, 80, 180, 350, 700, 1200, 2000];
-    delays.forEach((d) => setTimeout(() => setProseMirrorPlaceholder(text), d));
+    if (originalPlaceholder !== null) {
+      I18n.translations[I18n.currentLocale()][placeholderKey] = originalPlaceholder;
+    }
+    lastApplied = null;
+    originalPlaceholder = null;
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
-    applyOncePerOpen(text);
+
+    // markdown
+    setMarkdownPlaceholder(text);
+
+    // rich (via i18n)
+    applyRichPlaceholder(text);
   }
 
-  api.onAppEvent("composer:opened", applyRandomPlaceholder);
-  api.onAppEvent("composer:inserted", applyRandomPlaceholder);
-  api.onAppEvent("composer:reply-reloaded", applyRandomPlaceholder);
-  api.onPageChange(applyRandomPlaceholder);
+  function scheduleApply() {
+    setTimeout(applyRandomPlaceholder, 0);
+    setTimeout(applyRandomPlaceholder, 150);
+    setTimeout(applyRandomPlaceholder, 500);
+  }
+
+  api.onAppEvent("composer:opened", scheduleApply);
+  api.onAppEvent("composer:inserted", scheduleApply);
+  api.onAppEvent("composer:reply-reloaded", scheduleApply);
+
+  api.onAppEvent?.("composer:closed", () => {
+    restoreRichPlaceholder();
+  });
+
+  api.onPageChange(() => {
+    restoreRichPlaceholder();
+  });
 });
