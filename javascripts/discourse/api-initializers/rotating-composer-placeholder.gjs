@@ -64,6 +64,8 @@ export default apiInitializer("1.0", (api) => {
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     setComposerPlaceholderWithRetries(pickRandom(placeholders));
+    // eslint-disable-next-line no-console
+    console.log("[rotating-composer-placeholder] composer opened, settings:", settings?.rotating_placeholders);
   }
 
   api.onAppEvent("composer:opened", () => {
