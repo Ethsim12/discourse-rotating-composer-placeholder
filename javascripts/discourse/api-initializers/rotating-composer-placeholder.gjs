@@ -1,17 +1,11 @@
 import { apiInitializer } from "discourse/lib/api";
 
 export default apiInitializer("1.0", (api) => {
-  document.documentElement.setAttribute(
-    "data-rotating-composer-placeholder-loaded",
-    "1"
-  );
-
   const FALLBACK = ["Write your reply…"];
 
+  // keep one observer per page lifetime
   let pmObserver = null;
-  let pmWaitObserver = null;
-  let pmWaitTimeout = null;
-  let pinnedText = null;
+  let pmObserverStopTimer = null;
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
@@ -21,12 +15,14 @@ export default apiInitializer("1.0", (api) => {
     if (Array.isArray(value)) {
       return value.map((v) => String(v).trim()).filter(Boolean);
     }
+
     if (typeof value === "string") {
       return value
-        .split(/\r?\n|,|\|/g)
+        .split(/\r?\n|,|\|/g) // newline, comma, or pipe
         .map((s) => s.trim())
         .filter(Boolean);
     }
+
     return [];
   }
 
@@ -35,142 +31,124 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---------- Markdown ----------
-  function setMarkdownPlaceholder(text) {
-    const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
-    if (!els.length) return false;
-    els.forEach((el) => el.setAttribute("placeholder", text));
-    return true;
-  }
-
-  // ---------- Rich (ProseMirror) ----------
-  function findProseMirrorRoot() {
-    // Don’t over-specify – your DOM confirms this exact class exists
-    return document.querySelector(".ProseMirror.d-editor-input");
-  }
-
-  function applyProseMirrorPlaceholder(text) {
-    const pm = findProseMirrorRoot();
-    if (!pm) return false;
-
-    const p = pm.querySelector("p[data-placeholder]") || pm.querySelector("p");
-    if (!p) return false;
-
-    // overwrite the REAL attribute Discourse uses for the watermark
-    if (p.getAttribute("data-placeholder") !== text) {
-      p.setAttribute("data-placeholder", text);
-    }
-
-    // a11y label is safe on the root (and we know it sticks)
-    if (pm.getAttribute("aria-label") !== text) {
-      pm.setAttribute("aria-label", text);
-    }
-
-    return p.getAttribute("data-placeholder") === text;
-  }
-
-  function cleanupRichPin() {
+  function cleanupProseMirrorPin() {
     if (pmObserver) {
       pmObserver.disconnect();
       pmObserver = null;
     }
-    if (pmWaitObserver) {
-      pmWaitObserver.disconnect();
-      pmWaitObserver = null;
+    if (pmObserverStopTimer) {
+      clearTimeout(pmObserverStopTimer);
+      pmObserverStopTimer = null;
     }
-    if (pmWaitTimeout) {
-      clearTimeout(pmWaitTimeout);
-      pmWaitTimeout = null;
-    }
-    pinnedText = null;
   }
 
-  function attachPmObserver(pmEl) {
-    if (pmObserver) pmObserver.disconnect();
+  // ---------------- Markdown (textarea) ----------------
+  function setMarkdownPlaceholder(text) {
+    const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
+    if (!els.length) return false;
 
+    els.forEach((el) => el.setAttribute("placeholder", text));
+    return true;
+  }
+
+  // ---------------- Rich Text (ProseMirror) ----------------
+  function isProseMirrorEmpty(pmEl) {
+    // ProseMirror is "empty" when it contains only the trailing break / empty paragraph
+    // This is conservative and avoids pinning while user has content.
+    const txt = (pmEl.textContent || "").replace(/\u200B/g, "").trim();
+    return txt.length === 0;
+  }
+
+  function setProseMirrorPlaceholder(text) {
+    const pmEl = document.querySelector(
+      ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
+    );
+    if (!pmEl) return false;
+
+    // Only pin while empty; otherwise leave it alone
+    if (!isProseMirrorEmpty(pmEl)) return true;
+
+    // Discourse’s visible watermark comes from the existing attribute:
+    // <p data-placeholder="...">
+    const p =
+      pmEl.querySelector("p[data-placeholder]") ||
+      pmEl.querySelector("p") ||
+      null;
+
+    if (!p) return false;
+
+    // Overwrite the *existing* attribute Discourse CSS already reads.
+    p.setAttribute("data-placeholder", text);
+
+    // accessibility
+    pmEl.setAttribute("aria-label", text);
+
+    return true;
+  }
+
+  function ensureProseMirrorPinned(text) {
+    cleanupProseMirrorPin();
+
+    // Apply immediately + a couple of delayed passes to beat late init/toggles
+    setProseMirrorPlaceholder(text);
+    setTimeout(() => setProseMirrorPlaceholder(text), 50);
+    setTimeout(() => setProseMirrorPlaceholder(text), 150);
+    setTimeout(() => setProseMirrorPlaceholder(text), 400);
+
+    const pmEl = document.querySelector(
+      ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
+    );
+    if (!pmEl) return;
+
+    // Re-apply if Discourse/PM re-writes placeholder during mount/toggle.
     pmObserver = new MutationObserver(() => {
-      if (pinnedText) applyProseMirrorPlaceholder(pinnedText);
+      // stop pinning once user types something
+      if (!isProseMirrorEmpty(pmEl)) {
+        cleanupProseMirrorPin();
+        return;
+      }
+      setProseMirrorPlaceholder(text);
     });
 
     pmObserver.observe(pmEl, {
       subtree: true,
       childList: true,
       attributes: true,
-      // Discourse/PM may rewrite class + data-placeholder repeatedly
-      attributeFilter: ["data-placeholder", "class"],
+      attributeFilter: ["class", "data-placeholder"],
     });
 
-    // Apply immediately once observer is attached
-    if (pinnedText) {
-      applyProseMirrorPlaceholder(pinnedText);
-      setTimeout(() => applyProseMirrorPlaceholder(pinnedText), 50);
-      setTimeout(() => applyProseMirrorPlaceholder(pinnedText), 150);
-      setTimeout(() => applyProseMirrorPlaceholder(pinnedText), 500);
-    }
-  }
-
-  function waitForProseMirrorAndPin(text) {
-    pinnedText = text;
-
-    // Try immediately
-    const now = findProseMirrorRoot();
-    if (now) {
-      attachPmObserver(now);
-      return;
-    }
-
-    // Otherwise wait briefly for PM to mount, then attach
-    if (pmWaitObserver) pmWaitObserver.disconnect();
-
-    pmWaitObserver = new MutationObserver(() => {
-      const pm = findProseMirrorRoot();
-      if (!pm) return;
-
-      // Found it — stop waiting and attach the real observer
-      pmWaitObserver.disconnect();
-      pmWaitObserver = null;
-
-      attachPmObserver(pm);
-    });
-
-    pmWaitObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-
-    // Hard stop so we never “watch forever”
-    if (pmWaitTimeout) clearTimeout(pmWaitTimeout);
-    pmWaitTimeout = setTimeout(() => {
-      if (pmWaitObserver) {
-        pmWaitObserver.disconnect();
-        pmWaitObserver = null;
-      }
-      pmWaitTimeout = null;
-    }, 5000);
+    // hard stop so we never keep observers around forever
+    pmObserverStopTimer = setTimeout(() => cleanupProseMirrorPin(), 5000);
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // Markdown still works
+    // markdown is cheap and safe
     setMarkdownPlaceholder(text);
 
-    // Rich: wait until PM exists, then pin
-    waitForProseMirrorAndPin(text);
+    // rich text needs pinning (but bounded + auto-disconnect)
+    ensureProseMirrorPinned(text);
   }
 
+  // In 2026.x, "opened" may happen before the editor DOM exists,
+  // so schedule a few attempts (very small number).
   function scheduleApply() {
     setTimeout(applyRandomPlaceholder, 0);
-    setTimeout(applyRandomPlaceholder, 100);
-    setTimeout(applyRandomPlaceholder, 400);
-    setTimeout(applyRandomPlaceholder, 1200); // extra late pass for PM mount
+    setTimeout(applyRandomPlaceholder, 120);
+    setTimeout(applyRandomPlaceholder, 450);
   }
 
-  api.onAppEvent("composer:opened", scheduleApply);
   api.onAppEvent("composer:inserted", scheduleApply);
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
-  api.onPageChange(scheduleApply);
+  api.onAppEvent("composer:opened", scheduleApply);
 
-  api.onAppEvent?.("composer:closed", cleanupRichPin);
+  api.onAppEvent?.("composer:closed", () => {
+    cleanupProseMirrorPin();
+  });
+
+  api.onPageChange(() => {
+    cleanupProseMirrorPin();
+  });
 });
