@@ -1,0 +1,7 @@
+{
+  "name": "Rotating Composer Placeholder",
+  "about_url": "https://github.com/Ethsim12/discourse-rotating-composer-placeholder",
+  "license_url": "https://github.com/Ethsim12/discourse-rotating-composer-placeholder/blob/main/LICENSE",
+  "component": true,
+  "minimum_discourse_version": "3.2.0"
+}
