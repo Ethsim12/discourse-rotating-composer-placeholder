@@ -31,51 +31,13 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  function getVisibleMarkdownTextarea() {
-    const candidates = Array.from(
-      document.querySelectorAll("textarea.d-editor-input")
-    );
-    // Prefer one that is actually visible (not display:none, not hidden in another editor)
-    return (
-      candidates.find((t) => t.offsetParent !== null) ||
-      candidates[0] ||
-      null
-    );
-  }
-
-  function getVisibleProseMirror() {
-    const candidates = Array.from(
-      document.querySelectorAll(
-        ".ProseMirror.d-editor-input[contenteditable='true']"
-      )
-    );
-    return (
-      candidates.find((pm) => pm.offsetParent !== null) ||
-      candidates[0] ||
-      null
-    );
-  }
-
+  // ---- Markdown (legacy textarea) ----
   function setMarkdownPlaceholderOnce(text) {
-    const el = getVisibleMarkdownTextarea();
-    if (!el) return false;
+    const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
+    if (!els.length) return false;
 
-    el.setAttribute("placeholder", text);
+    els.forEach((el) => el.setAttribute("placeholder", text));
     return true;
-  }
-
-  function setProseMirrorRotatingPlaceholderOnce(text) {
-    const pmEl = getVisibleProseMirror();
-    if (!pmEl) return false;
-
-    const p = pmEl.querySelector("p");
-    if (!p) return false;
-
-    p.setAttribute("data-rotating-placeholder", text);
-    pmEl.setAttribute("aria-label", text);
-
-    // verify it stuck
-    return p.getAttribute("data-rotating-placeholder") === text;
   }
 
   function applyMarkdownWithRetries(text) {
@@ -93,6 +55,29 @@ export default apiInitializer("1.0", (api) => {
     setTimeout(() => setMarkdownPlaceholderOnce(text), 150);
     setTimeout(() => setMarkdownPlaceholderOnce(text), 500);
     setTimeout(() => setMarkdownPlaceholderOnce(text), 1200);
+  }
+
+  // ---- Rich editor (ProseMirror) ----
+  function setProseMirrorRotatingPlaceholderOnce(text) {
+    // Don’t over-specify selectors; match what you actually see in the DOM
+    const pmRoots = Array.from(document.querySelectorAll(".ProseMirror.d-editor-input"));
+    if (!pmRoots.length) return false;
+
+    let changed = false;
+
+    pmRoots.forEach((pmEl) => {
+      const p = pmEl.querySelector("p");
+      if (!p) return;
+
+      p.setAttribute("data-rotating-placeholder", text);
+      pmEl.setAttribute("aria-label", text);
+
+      if (p.getAttribute("data-rotating-placeholder") === text) {
+        changed = true;
+      }
+    });
+
+    return changed;
   }
 
   function applyRichWithRetries(text) {
@@ -116,14 +101,9 @@ export default apiInitializer("1.0", (api) => {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // ✅ Prefer ProseMirror if it exists (even if a hidden textarea also exists)
-    const hasPM = !!getVisibleProseMirror();
-
-    if (hasPM) {
-      applyRichWithRetries(text);
-    } else {
-      applyMarkdownWithRetries(text);
-    }
+    // Apply to BOTH – avoids unreliable “which editor is active” checks
+    applyMarkdownWithRetries(text);
+    applyRichWithRetries(text);
   }
 
   function scheduleApply() {
