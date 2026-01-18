@@ -31,20 +31,41 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  function setMarkdownPlaceholderOnce(text) {
-    const el =
-      document.querySelector(".d-editor textarea.d-editor-input") ||
-      document.querySelector("textarea.d-editor-input");
+  function getVisibleMarkdownTextarea() {
+    const candidates = Array.from(
+      document.querySelectorAll("textarea.d-editor-input")
+    );
+    // Prefer one that is actually visible (not display:none, not hidden in another editor)
+    return (
+      candidates.find((t) => t.offsetParent !== null) ||
+      candidates[0] ||
+      null
+    );
+  }
 
+  function getVisibleProseMirror() {
+    const candidates = Array.from(
+      document.querySelectorAll(
+        ".ProseMirror.d-editor-input[contenteditable='true']"
+      )
+    );
+    return (
+      candidates.find((pm) => pm.offsetParent !== null) ||
+      candidates[0] ||
+      null
+    );
+  }
+
+  function setMarkdownPlaceholderOnce(text) {
+    const el = getVisibleMarkdownTextarea();
     if (!el) return false;
+
     el.setAttribute("placeholder", text);
     return true;
   }
 
   function setProseMirrorRotatingPlaceholderOnce(text) {
-    const pmEl = document.querySelector(
-      ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
-    );
+    const pmEl = getVisibleProseMirror();
     if (!pmEl) return false;
 
     const p = pmEl.querySelector("p");
@@ -53,7 +74,7 @@ export default apiInitializer("1.0", (api) => {
     p.setAttribute("data-rotating-placeholder", text);
     pmEl.setAttribute("aria-label", text);
 
-    // verify it actually stuck (helps avoid false positives while PM is still initializing)
+    // verify it stuck
     return p.getAttribute("data-rotating-placeholder") === text;
   }
 
@@ -95,14 +116,13 @@ export default apiInitializer("1.0", (api) => {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    const hasMarkdown =
-      !!document.querySelector(".d-editor textarea.d-editor-input") ||
-      !!document.querySelector("textarea.d-editor-input");
+    // ✅ Prefer ProseMirror if it exists (even if a hidden textarea also exists)
+    const hasPM = !!getVisibleProseMirror();
 
-    if (hasMarkdown) {
-      applyMarkdownWithRetries(text);
-    } else {
+    if (hasPM) {
       applyRichWithRetries(text);
+    } else {
+      applyMarkdownWithRetries(text);
     }
   }
 
