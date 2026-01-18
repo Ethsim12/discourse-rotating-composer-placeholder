@@ -1,6 +1,7 @@
 import { apiInitializer } from "discourse/lib/api";
 
 export default apiInitializer("1.0", (api) => {
+  document.documentElement.setAttribute("data-rotating-composer-placeholder-loaded", "1");
   const FALLBACK = ["Write your reply…"];
 
   function pickRandom(arr) {
