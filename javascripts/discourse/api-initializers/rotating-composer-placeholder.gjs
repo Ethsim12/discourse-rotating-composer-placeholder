@@ -55,64 +55,22 @@ export default apiInitializer("1.0", (api) => {
   }
 
   function setProseMirrorPlaceholder(text) {
-    const pmEl = getProseMirrorEl();
-    if (!pmEl) return false;
-
-    const p = pmEl.querySelector("p");
+    const pmEl = document.querySelector(".d-editor .ProseMirror.d-editor-input[contenteditable='true']");
+    const p = pmEl?.querySelector("p");
     if (!p) return false;
-
-    // The visible watermark on your build is this attribute:
     p.setAttribute("data-placeholder", text);
-
-    // Nice-to-have accessibility:
     pmEl.setAttribute("aria-label", text);
-
     return true;
   }
 
-  function pinProseMirrorPlaceholder(text) {
-    pinnedText = text;
-
-    // 1) Apply immediately + a few delayed passes (beats init order)
+  function applyRichPlaceholderSafely(text) {
+    // try a few delayed passes to beat editor init
     setProseMirrorPlaceholder(text);
     setTimeout(() => setProseMirrorPlaceholder(text), 50);
     setTimeout(() => setProseMirrorPlaceholder(text), 150);
     setTimeout(() => setProseMirrorPlaceholder(text), 400);
-    setTimeout(() => setProseMirrorPlaceholder(text), 800);
-
-    // 2) Observe changes under the rich editor and re-apply if it flips back
-    if (pmObserver) pmObserver.disconnect();
-    pmObserver = new MutationObserver(() => {
-      // Re-query each time (ProseMirror can recreate nodes)
-      const pmEl = getProseMirrorEl();
-      const p = pmEl?.querySelector("p");
-      if (!p) return;
-
-      if (p.getAttribute("data-placeholder") !== pinnedText) {
-        p.setAttribute("data-placeholder", pinnedText);
-      }
-    });
-
-    // Observe the editor subtree; no attributeFilter (Discourse may mutate many attrs)
-    const pmElNow = getProseMirrorEl();
-    if (pmElNow) {
-      pmObserver.observe(pmElNow, { subtree: true, childList: true, attributes: true });
-    }
-
-    // 3) Timer pin for a short window (covers “late placeholder set” hooks)
-    if (pmInterval) clearInterval(pmInterval);
-    pmInterval = setInterval(() => {
-      setProseMirrorPlaceholder(pinnedText);
-    }, 100);
-
-    if (pmTimeout) clearTimeout(pmTimeout);
-    pmTimeout = setTimeout(() => {
-      // After init settles, stop the interval; observer stays (cheap) to catch rare flips
-      if (pmInterval) {
-        clearInterval(pmInterval);
-        pmInterval = null;
-      }
-    }, 2000);
+    setTimeout(() => setProseMirrorPlaceholder(text), 900);
+    setTimeout(() => setProseMirrorPlaceholder(text), 1600);
   }
 
   function setMarkdownPlaceholder(text) {
