@@ -9,20 +9,29 @@ export default apiInitializer("1.0", (api) => {
 
   // Find the editor input once the composer is actually in the DOM
   function findEditorElement() {
-    // Legacy markdown editor
-    const textarea =
-      document.querySelector("textarea.d-editor-input") ||
-      document.querySelector("textarea");
+    const composer =
+      document.querySelector(".composer") ||
+      document.querySelector(".composer-container") ||
+      document.querySelector(".d-editor");
 
+    if (!composer) return null;
+
+    // Legacy markdown textarea
+    const textarea = composer.querySelector("textarea.d-editor-input");
     if (textarea) return textarea;
 
-    // Some builds/editors may not use textarea; fall back to any editor-like input
-    return (
-      document.querySelector(".d-editor-input") ||
-      document.querySelector("[contenteditable='true']") ||
-      null
-    );
+    // Some variants still use this class (not necessarily textarea)
+    const dEditorInput = composer.querySelector(".d-editor-input");
+    if (dEditorInput) return dEditorInput;
+
+    // Contenteditable editors
+    const ce = composer.querySelector("[contenteditable='true']");
+    if (ce) return ce;
+
+    // Last resort: any textarea within composer
+    return composer.querySelector("textarea") || null;
   }
+
 
   function setComposerPlaceholder(text) {
     const el = findEditorElement();
@@ -53,9 +62,9 @@ export default apiInitializer("1.0", (api) => {
 
       // eslint-disable-next-line no-console
       console.log(
-        `[rotating-composer-placeholder] try ${tries}`,
-        { ok, hasComposer: !!document.querySelector(".composer") }
+        `[rotating-composer-placeholder] try ${tries} ok=${ok} hasComposer=${!!document.querySelector(".composer")}`
       );
+
 
       if (ok) return;
       if (tries < maxTries) setTimeout(attempt, delayMs);
