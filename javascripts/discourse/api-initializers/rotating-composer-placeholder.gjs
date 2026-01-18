@@ -12,23 +12,15 @@ export default apiInitializer("1.0", (api) => {
     const root = document.querySelector(".d-editor");
     if (!root) return null;
 
-    // Title input (not what we want for reply watermark)
-    // root.querySelector("#reply-title") exists, but skip it.
-
-    // Rich editor content area (contenteditable)
-    const rich =
-      root.querySelector(".d-editor-input[contenteditable='true']") ||
-      root.querySelector(".d-editor-container [contenteditable='true']") ||
-      root.querySelector(".composer-fields [contenteditable='true']");
-
-    if (rich) return { kind: "rich", el: rich, root };
-
-    // Legacy markdown textarea fallback (older setups)
     const textarea = root.querySelector("textarea.d-editor-input");
     if (textarea) return { kind: "textarea", el: textarea, root };
 
+    const rich = root.querySelector(".ProseMirror.d-editor-input[contenteditable='true']");
+    if (rich) return { kind: "rich", el: rich, root };
+
     return null;
   }
+
 
   function setComposerPlaceholder(text) {
     const found = findEditorElement();
@@ -39,27 +31,19 @@ export default apiInitializer("1.0", (api) => {
       return true;
     }
 
-    // Rich editor: set placeholder hooks used by CSS/ARIA
-    found.el.setAttribute("data-placeholder", text);
+    // Rich editor (ProseMirror)
+    // 1) Update the <p data-placeholder="..."> node that ProseMirror uses
+    const p = found.el.querySelector("p[data-placeholder]") || found.el.querySelector("p");
+    if (p) {
+      p.setAttribute("data-placeholder", text);
+    }
+  
+    // 2) Also keep accessibility label up to date
     found.el.setAttribute("aria-label", text);
-
-    // Also set on a stable wrapper that often drives ::before placeholder CSS
-    const wrapper =
-      found.root.querySelector(".d-editor-container") ||
-      found.root.querySelector(".d-editor-textarea-column") ||
-      found.root;
-
-    wrapper.setAttribute("data-placeholder", text);
-
-    // If a placeholder node exists, update it too
-    const placeholderNode =
-      found.root.querySelector(".d-editor-placeholder") ||
-      found.root.querySelector(".composer-placeholder");
-
-    if (placeholderNode) placeholderNode.textContent = text;
 
     return true;
   }
+
 
 
   // Keep retries as a fallback, but with composer:inserted we usually don't need many
