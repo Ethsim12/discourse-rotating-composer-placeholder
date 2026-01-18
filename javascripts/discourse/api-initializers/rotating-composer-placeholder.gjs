@@ -196,16 +196,22 @@ export default apiInitializer("1.0", (api) => {
     restoreI18n();
   }
 
-  // Start a fresh rotation when composer opens/inserts
+  // Start a fresh rotation when composer opens
+  api.onAppEvent("composer:open", scheduleStart);
   api.onAppEvent("composer:opened", scheduleStart);
-  api.onAppEvent("composer:inserted", scheduleStart);
 
   // Don’t reroll on reload; just keep the same pinned text
   api.onAppEvent("composer:reply-reloaded", () => {
-    setTimeout(keepPinned, 0);
-    setTimeout(keepPinned, 200);
+  setTimeout(keepPinned, 0);
+  setTimeout(keepPinned, 200);
   });
 
-  api.onAppEvent?.("composer:closed", cleanup);
+  // Cleanup when composer is dismissed/cancelled
+  api.onAppEvent("composer:cancelled", cleanup);
+
+  // Optional extra cleanup points:
+  // api.onAppEvent("composer:created-post", cleanup);
+  // api.onAppEvent("composer:edited-post", cleanup);
+
   api.onPageChange(() => cleanup());
 });
