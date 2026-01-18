@@ -8,6 +8,9 @@ export default apiInitializer("1.0", (api) => {
 
   const FALLBACK = ["Write your reply…"];
 
+  let pmObserver = null;
+  let pinnedText = null;
+
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
   }
@@ -30,80 +33,77 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // Markdown
-  function setMarkdownPlaceholderOnce(text) {
+  // ---------- Markdown ----------
+  function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
     els.forEach((el) => el.setAttribute("placeholder", text));
     return true;
   }
 
-  function applyMarkdownWithRetries(text) {
-    let tries = 0;
-    const maxTries = 20;
-    const delayMs = 80;
-
-    const tick = () => {
-      tries += 1;
-      if (setMarkdownPlaceholderOnce(text)) return;
-      if (tries < maxTries) setTimeout(tick, delayMs);
-    };
-
-    tick();
-    setTimeout(() => setMarkdownPlaceholderOnce(text), 150);
-    setTimeout(() => setMarkdownPlaceholderOnce(text), 500);
-    setTimeout(() => setMarkdownPlaceholderOnce(text), 1200);
+  // ---------- Rich (ProseMirror) ----------
+  function findProseMirrorRoot() {
+    return document.querySelector(".ProseMirror.d-editor-input");
   }
 
-  // Rich (ProseMirror) — update the *real* placeholder attribute on <p>
-  function setProseMirrorPlaceholderOnce(text) {
-    const pmRoots = Array.from(
-      document.querySelectorAll(".ProseMirror.d-editor-input")
-    );
-    if (!pmRoots.length) return false;
+  function applyProseMirrorPlaceholder(text) {
+    const pm = findProseMirrorRoot();
+    if (!pm) return false;
 
-    let ok = false;
+    const p = pm.querySelector("p[data-placeholder]") || pm.querySelector("p");
+    if (!p) return false;
 
-    pmRoots.forEach((pmEl) => {
-      pmEl.setAttribute("data-rcp-root", "1");
+    // overwrite the actual attribute Discourse uses for the watermark
+    p.setAttribute("data-placeholder", text);
+    pm.setAttribute("aria-label", text);
 
-      const p = pmEl.querySelector("p[data-placeholder]") || pmEl.querySelector("p");
-      if (!p) return;
+    return p.getAttribute("data-placeholder") === text;
+  }
 
-      // Overwrite the actual placeholder attribute Discourse displays
-      p.setAttribute("data-placeholder", text);
-      pmEl.setAttribute("aria-label", text);
+  function cleanupObserver() {
+    if (pmObserver) {
+      pmObserver.disconnect();
+      pmObserver = null;
+    }
+    pinnedText = null;
+  }
 
-      if (p.getAttribute("data-placeholder") === text) ok = true;
+  function pinProseMirrorPlaceholder(text) {
+    pinnedText = text;
+
+    const pm = findProseMirrorRoot();
+    if (!pm) return;
+
+    // Apply immediately + a few delayed passes during mount
+    applyProseMirrorPlaceholder(text);
+    setTimeout(() => applyProseMirrorPlaceholder(text), 50);
+    setTimeout(() => applyProseMirrorPlaceholder(text), 150);
+    setTimeout(() => applyProseMirrorPlaceholder(text), 500);
+    setTimeout(() => applyProseMirrorPlaceholder(text), 1200);
+
+    // Observe only the ProseMirror root while composer is open
+    cleanupObserver();
+    pmObserver = new MutationObserver(() => {
+      if (pinnedText) applyProseMirrorPlaceholder(pinnedText);
     });
 
-    return ok;
-  }
-
-  function applyRichWithRetries(text) {
-    let tries = 0;
-    const maxTries = 80; // ~6.4s
-    const delayMs = 80;
-
-    const tick = () => {
-      tries += 1;
-      if (setProseMirrorPlaceholderOnce(text)) return;
-      if (tries < maxTries) setTimeout(tick, delayMs);
-    };
-
-    tick();
-    setTimeout(() => setProseMirrorPlaceholderOnce(text), 150);
-    setTimeout(() => setProseMirrorPlaceholderOnce(text), 500);
-    setTimeout(() => setProseMirrorPlaceholderOnce(text), 1200);
-    setTimeout(() => setProseMirrorPlaceholderOnce(text), 2500);
+    pmObserver.observe(pm, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-placeholder", "class"],
+    });
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    applyMarkdownWithRetries(text);
-    applyRichWithRetries(text);
+    // markdown (works already)
+    setMarkdownPlaceholder(text);
+
+    // rich (pin it)
+    pinProseMirrorPlaceholder(text);
   }
 
   function scheduleApply() {
@@ -116,4 +116,7 @@ export default apiInitializer("1.0", (api) => {
   api.onAppEvent("composer:inserted", scheduleApply);
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
   api.onPageChange(scheduleApply);
+
+  // Cleanup (event may or may not exist; safe optional chaining)
+  api.onAppEvent?.("composer:closed", cleanupObserver);
 });
