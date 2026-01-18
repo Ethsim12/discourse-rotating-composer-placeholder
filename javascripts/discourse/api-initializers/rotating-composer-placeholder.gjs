@@ -6,9 +6,13 @@ export default apiInitializer("1.0", (api) => {
   }
 
   function setComposerPlaceholder(text) {
+  requestAnimationFrame(() => {
     const el = document.querySelector(".d-editor-input");
-    if (el) el.setAttribute("placeholder", text);
-  }
+    if (el) {
+      el.setAttribute("placeholder", text);
+    }
+  });
+}
 
   function getPlaceholdersFromSettings() {
     // settings.rotating_placeholders is a theme setting (list)
