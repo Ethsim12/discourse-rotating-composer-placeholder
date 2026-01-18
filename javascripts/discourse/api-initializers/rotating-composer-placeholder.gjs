@@ -31,18 +31,17 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---- Markdown (legacy textarea) ----
+  // ---------------- Markdown (textarea) ----------------
   function setMarkdownPlaceholderOnce(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
-
     els.forEach((el) => el.setAttribute("placeholder", text));
     return true;
   }
 
   function applyMarkdownWithRetries(text) {
     let tries = 0;
-    const maxTries = 30;
+    const maxTries = 20;
     const delayMs = 80;
 
     const tick = () => {
@@ -57,51 +56,75 @@ export default apiInitializer("1.0", (api) => {
     setTimeout(() => setMarkdownPlaceholderOnce(text), 1200);
   }
 
-  // ---- Rich editor (ProseMirror) ----
-  function setProseMirrorRotatingPlaceholderOnce(text) {
-    // Don’t over-specify selectors; match what you actually see in the DOM
-    const pmRoots = Array.from(document.querySelectorAll(".ProseMirror.d-editor-input"));
+  // ---------------- Rich (ProseMirror) ----------------
+  function setProseMirrorPlaceholderOnCurrentDom(text) {
+    const pmRoots = Array.from(
+      document.querySelectorAll(".ProseMirror.d-editor-input")
+    );
     if (!pmRoots.length) return false;
 
     let changed = false;
 
     pmRoots.forEach((pmEl) => {
-      const p = pmEl.querySelector("p");
-      if (!p) return;
+      // Set a debug marker on the root so we can prove we touched it
+      pmEl.setAttribute("data-rcp-root", "1");
 
-      p.setAttribute("data-rotating-placeholder", text);
+      // Target ALL placeholder paragraphs we can see (more robust than just the first p)
+      const ps = Array.from(pmEl.querySelectorAll("p"));
+      ps.forEach((p) => {
+        // Only bother if it looks like the placeholder paragraph (has data-placeholder or is empty-ish)
+        const hasCorePlaceholder = p.hasAttribute("data-placeholder");
+        if (!hasCorePlaceholder && ps.length > 1) return;
+
+        p.setAttribute("data-rotating-placeholder", text);
+
+        if (p.getAttribute("data-rotating-placeholder") === text) {
+          changed = true;
+        }
+      });
+
       pmEl.setAttribute("aria-label", text);
-
-      if (p.getAttribute("data-rotating-placeholder") === text) {
-        changed = true;
-      }
     });
 
     return changed;
   }
 
-  function applyRichWithRetries(text) {
-    let tries = 0;
-    const maxTries = 60; // ~4.8s
-    const delayMs = 80;
+  // Short burst over a few animation frames to beat ProseMirror settling/replacement
+  function applyRichBurst(text) {
+    const maxFrames = 12; // bounded: ~200ms worst case
+    let frame = 0;
 
-    const tick = () => {
-      tries += 1;
-      if (setProseMirrorRotatingPlaceholderOnce(text)) return;
-      if (tries < maxTries) setTimeout(tick, delayMs);
+    const step = () => {
+      frame += 1;
+      setProseMirrorPlaceholderOnCurrentDom(text);
+      if (frame < maxFrames) requestAnimationFrame(step);
     };
 
-    tick();
-    setTimeout(() => setProseMirrorRotatingPlaceholderOnce(text), 150);
-    setTimeout(() => setProseMirrorRotatingPlaceholderOnce(text), 500);
-    setTimeout(() => setProseMirrorRotatingPlaceholderOnce(text), 1200);
+    requestAnimationFrame(step);
+  }
+
+  function applyRichWithRetries(text) {
+    // A few delayed “wins” + a RAF burst each time
+    applyRichBurst(text);
+
+    setTimeout(() => applyRichBurst(text), 80);
+    setTimeout(() => applyRichBurst(text), 200);
+    setTimeout(() => applyRichBurst(text), 500);
+    setTimeout(() => applyRichBurst(text), 1200);
+    setTimeout(() => applyRichBurst(text), 2500);
+
+    // One tiny log so you can confirm rich roots are found (should not spam)
+    // eslint-disable-next-line no-console
+    console.info("[rotating-composer-placeholder] PM roots:",
+      document.querySelectorAll(".ProseMirror.d-editor-input").length
+    );
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // Apply to BOTH – avoids unreliable “which editor is active” checks
+    // Apply to both (safe, bounded)
     applyMarkdownWithRetries(text);
     applyRichWithRetries(text);
   }
