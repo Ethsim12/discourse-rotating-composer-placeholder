@@ -1,5 +1,16 @@
-// Rich editor (ProseMirror) placeholder override:
-// Discourse writes p[data-placeholder], but we display our own attribute instead.
+// Rich editor (ProseMirror):
+// When the editor is empty, override the placeholder text using our custom attribute.
+// Falls back to Discourse's default data-placeholder if ours isn't set.
+
+.d-editor .ProseMirror.d-editor-input p.is-empty::before,
+.d-editor .ProseMirror.d-editor-input p:empty::before,
 .d-editor .ProseMirror.d-editor-input p[data-placeholder]::before {
-  content: attr(data-rotating-placeholder) !important;
+  content: attr(data-rotating-placeholder);
+}
+
+// Fallback to the core placeholder if our attribute is missing/empty
+.d-editor .ProseMirror.d-editor-input p.is-empty:not([data-rotating-placeholder])::before,
+.d-editor .ProseMirror.d-editor-input p:empty:not([data-rotating-placeholder])::before,
+.d-editor .ProseMirror.d-editor-input p[data-placeholder]:not([data-rotating-placeholder])::before {
+  content: attr(data-placeholder);
 }
