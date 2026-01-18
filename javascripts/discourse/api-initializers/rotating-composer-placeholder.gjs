@@ -11,14 +11,12 @@ export default apiInitializer("1.0", (api) => {
     if (Array.isArray(value)) {
       return value.map((v) => String(v).trim()).filter(Boolean);
     }
-
     if (typeof value === "string") {
       return value
         .split(/\r?\n|,|\|/g)
         .map((s) => s.trim())
         .filter(Boolean);
     }
-
     return [];
   }
 
@@ -28,15 +26,37 @@ export default apiInitializer("1.0", (api) => {
   }
 
   // ---- Markdown ----
-  function setMarkdownPlaceholder(text) {
-    const el = document.querySelector(".d-editor textarea.d-editor-input");
+  function setMarkdownPlaceholderOnce(text) {
+    const el =
+      document.querySelector(".d-editor textarea.d-editor-input") ||
+      document.querySelector("textarea.d-editor-input");
+
     if (!el) return false;
+
     el.setAttribute("placeholder", text);
     return true;
   }
 
+  function applyMarkdownWithRetries(text) {
+    let tries = 0;
+    const maxTries = 30; // ~2.4s
+    const delayMs = 80;
+
+    const tick = () => {
+      tries += 1;
+      if (setMarkdownPlaceholderOnce(text)) return;
+      if (tries < maxTries) setTimeout(tick, delayMs);
+    };
+
+    // also do a few “late wins” in case Discourse overwrites placeholder after mount
+    tick();
+    setTimeout(() => setMarkdownPlaceholderOnce(text), 150);
+    setTimeout(() => setMarkdownPlaceholderOnce(text), 500);
+    setTimeout(() => setMarkdownPlaceholderOnce(text), 1200);
+  }
+
   // ---- Rich (ProseMirror) ----
-  function setProseMirrorRotatingPlaceholder(text) {
+  function setProseMirrorRotatingPlaceholderOnce(text) {
     const pmEl = document.querySelector(
       ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
     );
@@ -45,43 +65,45 @@ export default apiInitializer("1.0", (api) => {
     const p = pmEl.querySelector("p");
     if (!p) return false;
 
-    // Do NOT fight data-placeholder (Discourse will reset it).
-    // Instead set our own attribute that CSS will display.
+    // we render this via CSS
     p.setAttribute("data-rotating-placeholder", text);
-
-    // Optional accessibility
     pmEl.setAttribute("aria-label", text);
-
     return true;
   }
 
   function applyRichWithRetries(text) {
     let tries = 0;
-    const maxTries = 30; // ~2.4s at 80ms
+    const maxTries = 30; // ~2.4s
     const delayMs = 80;
 
     const tick = () => {
       tries += 1;
-      if (setProseMirrorRotatingPlaceholder(text)) return;
+      if (setProseMirrorRotatingPlaceholderOnce(text)) return;
       if (tries < maxTries) setTimeout(tick, delayMs);
     };
 
     tick();
+    setTimeout(() => setProseMirrorRotatingPlaceholderOnce(text), 150);
+    setTimeout(() => setProseMirrorRotatingPlaceholderOnce(text), 500);
+    setTimeout(() => setProseMirrorRotatingPlaceholderOnce(text), 1200);
   }
 
-  function applyPlaceholder(text) {
-    // Prefer markdown if present
-    if (setMarkdownPlaceholder(text)) return;
-
-    // Otherwise rich
-    applyRichWithRetries(text);
-  }
-
-  // ✅ This function MUST exist because your event handler calls it
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
-    applyPlaceholder(text);
+
+    // If markdown exists, keep “winning” after Discourse overwrites
+    const hasMarkdown =
+      !!document.querySelector(".d-editor textarea.d-editor-input") ||
+      !!document.querySelector("textarea.d-editor-input");
+
+    if (hasMarkdown) {
+      applyMarkdownWithRetries(text);
+      return;
+    }
+
+    // otherwise try rich
+    applyRichWithRetries(text);
   }
 
   api.onAppEvent("composer:inserted", () => {
