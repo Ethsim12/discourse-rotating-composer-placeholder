@@ -21,8 +21,11 @@ export default apiInitializer("1.0", (api) => {
 
   let richPinTimer = null;
 
-  // NEW: hold one chosen string per open composer session
+  // Hold one chosen string per open composer session
   let currentText = null;
+
+  // NEW (robust): prevent scheduleStart running twice for the same open flow
+  let sessionActive = false;
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
@@ -51,7 +54,9 @@ export default apiInitializer("1.0", (api) => {
   }
 
   function getDeep(obj, path) {
-    return path.split(".").reduce((acc, part) => (acc ? acc[part] : undefined), obj);
+    return path
+      .split(".")
+      .reduce((acc, part) => (acc ? acc[part] : undefined), obj);
   }
 
   function setDeep(obj, path, value) {
@@ -101,7 +106,9 @@ export default apiInitializer("1.0", (api) => {
   }
 
   function setMarkdownPlaceholder(text) {
-    const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
+    const els = Array.from(
+      document.querySelectorAll("textarea.d-editor-input")
+    );
     if (!els.length) return false;
     els.forEach((el) => el.setAttribute("placeholder", text));
     return true;
@@ -154,7 +161,7 @@ export default apiInitializer("1.0", (api) => {
     tick();
   }
 
-  // NEW: choose once per open
+  // Choose once per open
   function ensureCurrentText() {
     if (currentText) return currentText;
     const placeholders = getPlaceholdersFromSettings();
@@ -181,17 +188,24 @@ export default apiInitializer("1.0", (api) => {
     applyPlaceholder(text);
   }
 
+  // NEW (robust): only start once per session, even if open+opened both fire
   function scheduleStart() {
+    if (sessionActive) return;
+    sessionActive = true;
+
     setTimeout(startNewPlaceholderSession, 0);
     setTimeout(keepPinned, 150);
     setTimeout(keepPinned, 500);
   }
 
   function cleanup() {
+    sessionActive = false;
+
     if (richPinTimer) {
       clearTimeout(richPinTimer);
       richPinTimer = null;
     }
+
     currentText = null;
     restoreI18n();
   }
@@ -202,8 +216,8 @@ export default apiInitializer("1.0", (api) => {
 
   // Don’t reroll on reload; just keep the same pinned text
   api.onAppEvent("composer:reply-reloaded", () => {
-  setTimeout(keepPinned, 0);
-  setTimeout(keepPinned, 200);
+    setTimeout(keepPinned, 0);
+    setTimeout(keepPinned, 200);
   });
 
   // Cleanup when composer is dismissed/cancelled
