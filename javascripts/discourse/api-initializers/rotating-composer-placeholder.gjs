@@ -2,7 +2,11 @@ import { apiInitializer } from "discourse/lib/api";
 
 export default apiInitializer("1.0", (api) => {
   const FALLBACK = ["Write your reply…"];
+
   let pmObserver = null;
+  let pmInterval = null;
+  let pmTimeout = null;
+  let pinnedText = null;
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
@@ -28,103 +32,131 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  function findEditorElement() {
-    const root = document.querySelector(".d-editor");
-    if (!root) return null;
-
-    // Markdown editor
-    const textarea = root.querySelector("textarea.d-editor-input");
-    if (textarea) return { kind: "textarea", el: textarea };
-
-    // Rich editor (ProseMirror)
-    const pm = root.querySelector(
-      ".ProseMirror.d-editor-input[contenteditable='true']"
-    );
-    if (pm) return { kind: "prosemirror", el: pm };
-
-    return null;
+  function cleanupRichPin() {
+    if (pmObserver) {
+      pmObserver.disconnect();
+      pmObserver = null;
+    }
+    if (pmInterval) {
+      clearInterval(pmInterval);
+      pmInterval = null;
+    }
+    if (pmTimeout) {
+      clearTimeout(pmTimeout);
+      pmTimeout = null;
+    }
+    pinnedText = null;
   }
 
-  function applyProseMirrorPlaceholder(pmEl, text) {
-    // Root attributes (accessibility + some themes)
-    pmEl.setAttribute("data-placeholder", text);
+  function getProseMirrorEl() {
+    return document.querySelector(
+      ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
+    );
+  }
+
+  function setProseMirrorPlaceholder(text) {
+    const pmEl = getProseMirrorEl();
+    if (!pmEl) return false;
+
+    const p = pmEl.querySelector("p");
+    if (!p) return false;
+
+    // The visible watermark on your build is this attribute:
+    p.setAttribute("data-placeholder", text);
+
+    // Nice-to-have accessibility:
     pmEl.setAttribute("aria-label", text);
 
-    // Visible watermark lives on the first paragraph
-    const p =
-      pmEl.querySelector("p.is-empty[data-placeholder]") ||
-      pmEl.querySelector("p[data-placeholder]") ||
-      pmEl.querySelector("p");
-
-    if (p) {
-      p.setAttribute("data-placeholder", text);
-    }
+    return true;
   }
 
-  function ensureProseMirrorObserver(pmEl, text) {
-    if (pmObserver) pmObserver.disconnect();
+  function pinProseMirrorPlaceholder(text) {
+    pinnedText = text;
 
+    // 1) Apply immediately + a few delayed passes (beats init order)
+    setProseMirrorPlaceholder(text);
+    setTimeout(() => setProseMirrorPlaceholder(text), 50);
+    setTimeout(() => setProseMirrorPlaceholder(text), 150);
+    setTimeout(() => setProseMirrorPlaceholder(text), 400);
+    setTimeout(() => setProseMirrorPlaceholder(text), 800);
+
+    // 2) Observe changes under the rich editor and re-apply if it flips back
+    if (pmObserver) pmObserver.disconnect();
     pmObserver = new MutationObserver(() => {
-      const p = pmEl.querySelector("p");
-      if (p && p.getAttribute("data-placeholder") !== text) {
-        p.setAttribute("data-placeholder", text);
+      // Re-query each time (ProseMirror can recreate nodes)
+      const pmEl = getProseMirrorEl();
+      const p = pmEl?.querySelector("p");
+      if (!p) return;
+
+      if (p.getAttribute("data-placeholder") !== pinnedText) {
+        p.setAttribute("data-placeholder", pinnedText);
       }
     });
 
-    // Watch the editor subtree because ProseMirror recreates nodes
-    pmObserver.observe(pmEl, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-    });
-
-    // Initial + delayed applications to beat editor init
-    applyProseMirrorPlaceholder(pmEl, text);
-    setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 150);
-    setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 500);
-    setTimeout(() => applyProseMirrorPlaceholder(pmEl, text), 1200);
-  }
-
-  function setComposerPlaceholder(text) {
-    const found = findEditorElement();
-    if (!found) return false;
-
-    if (found.kind === "textarea") {
-      found.el.setAttribute("placeholder", text);
-      return true;
+    // Observe the editor subtree; no attributeFilter (Discourse may mutate many attrs)
+    const pmElNow = getProseMirrorEl();
+    if (pmElNow) {
+      pmObserver.observe(pmElNow, { subtree: true, childList: true, attributes: true });
     }
 
-    if (found.kind === "prosemirror") {
-      ensureProseMirrorObserver(found.el, text);
-      return true;
-    }
+    // 3) Timer pin for a short window (covers “late placeholder set” hooks)
+    if (pmInterval) clearInterval(pmInterval);
+    pmInterval = setInterval(() => {
+      setProseMirrorPlaceholder(pinnedText);
+    }, 100);
 
-    return false;
+    if (pmTimeout) clearTimeout(pmTimeout);
+    pmTimeout = setTimeout(() => {
+      // After init settles, stop the interval; observer stays (cheap) to catch rare flips
+      if (pmInterval) {
+        clearInterval(pmInterval);
+        pmInterval = null;
+      }
+    }, 2000);
   }
 
-  function setComposerPlaceholderWithRetries(text) {
-    let tries = 0;
-    const maxTries = 15;
-    const delayMs = 80;
-
-    const attempt = () => {
-      tries += 1;
-      const ok = setComposerPlaceholder(text);
-      if (ok) return;
-      if (tries < maxTries) setTimeout(attempt, delayMs);
-    };
-
-    attempt();
+  function setMarkdownPlaceholder(text) {
+    const el = document.querySelector(".d-editor textarea.d-editor-input");
+    if (!el) return false;
+    el.setAttribute("placeholder", text);
+    return true;
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
-    setComposerPlaceholderWithRetries(pickRandom(placeholders));
+    const text = pickRandom(placeholders);
+
+    // Try markdown first
+    if (setMarkdownPlaceholder(text)) return;
+
+    // Otherwise pin rich editor placeholder
+    pinProseMirrorPlaceholder(text);
+  }
+
+  // Rich editor can mount “after inserted” in a couple of frames; retry lightly.
+  function applyWithRetries() {
+    let tries = 0;
+    const maxTries = 10;
+
+    const tick = () => {
+      tries += 1;
+      applyRandomPlaceholder();
+
+      // If neither markdown nor PM exists yet, keep trying briefly
+      const hasMarkdown = !!document.querySelector(".d-editor textarea.d-editor-input");
+      const hasPM = !!getProseMirrorEl();
+
+      if ((hasMarkdown || hasPM) || tries >= maxTries) return;
+      setTimeout(tick, 80);
+    };
+
+    tick();
   }
 
   api.onAppEvent("composer:inserted", () => {
     try {
-      applyRandomPlaceholder();
+      cleanupRichPin();
+      applyWithRetries();
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn("[rotating-composer-placeholder] failed:", e);
@@ -133,7 +165,8 @@ export default apiInitializer("1.0", (api) => {
 
   api.onAppEvent("composer:reply-reloaded", () => {
     try {
-      applyRandomPlaceholder();
+      cleanupRichPin();
+      applyWithRetries();
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn("[rotating-composer-placeholder] failed:", e);
@@ -141,9 +174,6 @@ export default apiInitializer("1.0", (api) => {
   });
 
   api.onAppEvent?.("composer:closed", () => {
-    if (pmObserver) {
-      pmObserver.disconnect();
-      pmObserver = null;
-    }
+    cleanupRichPin();
   });
 });
