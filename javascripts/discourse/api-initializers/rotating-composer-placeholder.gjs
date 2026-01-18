@@ -9,9 +9,12 @@ export default apiInitializer("1.0", (api) => {
   );
 
   const FALLBACK = ["Write your reply…"];
+
+  // These are the keys you proved exist on your build
   const KEYS = ["composer.reply_placeholder", "js.composer.reply_placeholder"];
 
-  let originals = null; // { key: originalString }
+  // originals = Map key -> original string
+  let originals = null;
   let lastApplied = null;
 
   function pickRandom(arr) {
@@ -36,7 +39,29 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---- Markdown (textarea) ----
+  // ---- helpers for nested I18n keys ----
+  function localeRoot() {
+    return I18n.translations[I18n.currentLocale()];
+  }
+
+  function getDeep(obj, path) {
+    return path.split(".").reduce((acc, part) => (acc ? acc[part] : undefined), obj);
+  }
+
+  function setDeep(obj, path, value) {
+    const parts = path.split(".");
+    let cur = obj;
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts[i];
+      if (typeof cur[p] !== "object" || cur[p] === null) cur[p] = {};
+      cur = cur[p];
+    }
+
+    cur[parts[parts.length - 1]] = value;
+  }
+
+  // ---- Markdown (still direct) ----
   function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
@@ -44,32 +69,27 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
-  // ---- Rich editor (i18n-driven placeholder) ----
-  function currentLocaleTranslations() {
-    // In Discourse, this is the object backing I18n.t() for the current locale
-    return I18n.translations[I18n.currentLocale()];
-  }
-
   function captureOriginalsOnce() {
     if (originals) return;
 
     originals = {};
+    const root = localeRoot();
+
     KEYS.forEach((k) => {
-      const v = I18n.t(k, { defaultValue: null });
+      const v = getDeep(root, k);
       if (typeof v === "string") originals[k] = v;
     });
   }
 
   function applyRichPlaceholder(text) {
     captureOriginalsOnce();
-    if (lastApplied === text) return;
+    if (!originals || lastApplied === text) return;
 
-    const t = currentLocaleTranslations();
+    const root = localeRoot();
 
-    // Update both keys (they’re currently identical on your build)
     KEYS.forEach((k) => {
       if (k in originals) {
-        t[k] = text;
+        setDeep(root, k, text);
       }
     });
 
@@ -79,28 +99,26 @@ export default apiInitializer("1.0", (api) => {
   function restoreRichPlaceholder() {
     if (!originals) return;
 
-    const t = currentLocaleTranslations();
-    Object.keys(originals).forEach((k) => {
-      t[k] = originals[k];
-    });
+    const root = localeRoot();
+    Object.keys(originals).forEach((k) => setDeep(root, k, originals[k]));
 
-    lastApplied = null;
     originals = null;
+    lastApplied = null;
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // markdown (cheap, harmless even if hidden)
+    // markdown (cheap)
     setMarkdownPlaceholder(text);
 
-    // rich (this is what the ProseMirror placeholder is actually reading)
+    // rich (update translation source)
     applyRichPlaceholder(text);
   }
 
-  // In 2026.x the composer DOM/instance can come in after the event, so do a few bounded passes
   function scheduleApply() {
+    // a few bounded passes to catch composer mount/toggle
     setTimeout(applyRandomPlaceholder, 0);
     setTimeout(applyRandomPlaceholder, 150);
     setTimeout(applyRandomPlaceholder, 500);
@@ -111,7 +129,6 @@ export default apiInitializer("1.0", (api) => {
   api.onAppEvent("composer:inserted", scheduleApply);
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
 
-  // cleanup
   api.onAppEvent?.("composer:closed", restoreRichPlaceholder);
   api.onPageChange(() => restoreRichPlaceholder());
 });
