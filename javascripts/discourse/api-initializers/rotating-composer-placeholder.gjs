@@ -10,11 +10,8 @@ export default apiInitializer("1.0", (api) => {
   const FALLBACK = ["Write your reply…"];
 
   const KEYS = [
-    // Markdown composer
     "composer.reply_placeholder",
     "js.composer.reply_placeholder",
-
-    // Rich text editor (RTE)
     "js.composer.reply_placeholder_rte",
     "js.composer.reply_placeholder_rte_no_images",
   ];
@@ -22,8 +19,10 @@ export default apiInitializer("1.0", (api) => {
   let originals = null;
   let lastApplied = null;
 
-  // Track one in-flight pin job so we don't stack timers on repeated events
   let richPinTimer = null;
+
+  // NEW: hold one chosen string per open composer session
+  let currentText = null;
 
   function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
@@ -47,7 +46,6 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---- nested i18n helpers ----
   function localeRoot() {
     return I18n.translations[I18n.currentLocale()];
   }
@@ -102,7 +100,6 @@ export default apiInitializer("1.0", (api) => {
     lastApplied = null;
   }
 
-  // ---- Markdown textarea ----
   function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
@@ -110,7 +107,6 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
-  // ---- Rich editor pinning ----
   function getRichPlaceholderNode() {
     return document.querySelector(
       ".d-editor .ProseMirror.d-editor-input p[data-placeholder]"
@@ -129,8 +125,6 @@ export default apiInitializer("1.0", (api) => {
     return p.getAttribute("data-placeholder") === text;
   }
 
-  // Bounded “late win” to beat ProseMirror/Discourse overwrites.
-  // Runs at most ~3s, stops immediately once it sticks.
   function pinRichPlaceholder(text) {
     if (richPinTimer) {
       clearTimeout(richPinTimer);
@@ -138,13 +132,12 @@ export default apiInitializer("1.0", (api) => {
     }
 
     let tries = 0;
-    const maxTries = 40; // 40 * 80ms ~= 3.2s
+    const maxTries = 40;
     const delayMs = 80;
 
     const tick = () => {
       tries += 1;
 
-      // If the node doesn't exist yet, or Discourse overwrote it, keep trying
       const ok = setRichPlaceholderNow(text);
       if (ok) {
         richPinTimer = null;
@@ -158,28 +151,40 @@ export default apiInitializer("1.0", (api) => {
       }
     };
 
-    // Start immediately
     tick();
   }
 
-  function applyRandomPlaceholder() {
+  // NEW: choose once per open
+  function ensureCurrentText() {
+    if (currentText) return currentText;
     const placeholders = getPlaceholdersFromSettings();
-    const text = pickRandom(placeholders);
+    currentText = pickRandom(placeholders);
+    return currentText;
+  }
 
-    // 1) Override sources for any future mount
+  function applyPlaceholder(text) {
     applyI18nOverride(text);
-
-    // 2) Markdown (works already)
     setMarkdownPlaceholder(text);
-
-    // 3) Rich: keep winning for a short bounded time
     pinRichPlaceholder(text);
   }
 
-  function scheduleApply() {
-    setTimeout(applyRandomPlaceholder, 0);
-    setTimeout(applyRandomPlaceholder, 150);
-    setTimeout(applyRandomPlaceholder, 500);
+  // Called for “new session” moments
+  function startNewPlaceholderSession() {
+    currentText = null;
+    const text = ensureCurrentText();
+    applyPlaceholder(text);
+  }
+
+  // Called for “keep it pinned” moments (no reroll)
+  function keepPinned() {
+    const text = ensureCurrentText();
+    applyPlaceholder(text);
+  }
+
+  function scheduleStart() {
+    setTimeout(startNewPlaceholderSession, 0);
+    setTimeout(keepPinned, 150);
+    setTimeout(keepPinned, 500);
   }
 
   function cleanup() {
@@ -187,14 +192,20 @@ export default apiInitializer("1.0", (api) => {
       clearTimeout(richPinTimer);
       richPinTimer = null;
     }
+    currentText = null;
     restoreI18n();
   }
 
-  api.onAppEvent("composer:opened", scheduleApply);
-  api.onAppEvent("composer:inserted", scheduleApply);
-  api.onAppEvent("composer:reply-reloaded", scheduleApply);
+  // Start a fresh rotation when composer opens/inserts
+  api.onAppEvent("composer:opened", scheduleStart);
+  api.onAppEvent("composer:inserted", scheduleStart);
+
+  // Don’t reroll on reload; just keep the same pinned text
+  api.onAppEvent("composer:reply-reloaded", () => {
+    setTimeout(keepPinned, 0);
+    setTimeout(keepPinned, 200);
+  });
 
   api.onAppEvent?.("composer:closed", cleanup);
   api.onPageChange(() => cleanup());
 });
-
