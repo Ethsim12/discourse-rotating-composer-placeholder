@@ -1,0 +1,1 @@
+# discourse-rotating-composer-placeholder
