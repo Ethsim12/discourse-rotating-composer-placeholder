@@ -1,7 +1,6 @@
 import { apiInitializer } from "discourse/lib/api";
 
 export default apiInitializer("1.0", (api) => {
-  // PROOF this file is loaded (remove later)
   document.documentElement.setAttribute(
     "data-rotating-composer-placeholder-loaded",
     "1"
@@ -31,7 +30,7 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---------------- Markdown (textarea) ----------------
+  // Markdown
   function setMarkdownPlaceholderOnce(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
@@ -56,75 +55,47 @@ export default apiInitializer("1.0", (api) => {
     setTimeout(() => setMarkdownPlaceholderOnce(text), 1200);
   }
 
-  // ---------------- Rich (ProseMirror) ----------------
-  function setProseMirrorPlaceholderOnCurrentDom(text) {
+  // Rich (ProseMirror) — write ONLY to the root, not <p>
+  function setProseMirrorRootPlaceholderOnce(text) {
     const pmRoots = Array.from(
       document.querySelectorAll(".ProseMirror.d-editor-input")
     );
     if (!pmRoots.length) return false;
 
-    let changed = false;
-
     pmRoots.forEach((pmEl) => {
-      // Set a debug marker on the root so we can prove we touched it
       pmEl.setAttribute("data-rcp-root", "1");
-
-      // Target ALL placeholder paragraphs we can see (more robust than just the first p)
-      const ps = Array.from(pmEl.querySelectorAll("p"));
-      ps.forEach((p) => {
-        // Only bother if it looks like the placeholder paragraph (has data-placeholder or is empty-ish)
-        const hasCorePlaceholder = p.hasAttribute("data-placeholder");
-        if (!hasCorePlaceholder && ps.length > 1) return;
-
-        p.setAttribute("data-rotating-placeholder", text);
-
-        if (p.getAttribute("data-rotating-placeholder") === text) {
-          changed = true;
-        }
-      });
-
+      pmEl.setAttribute("data-rotating-placeholder", text); // <-- on root
       pmEl.setAttribute("aria-label", text);
     });
 
-    return changed;
-  }
-
-  // Short burst over a few animation frames to beat ProseMirror settling/replacement
-  function applyRichBurst(text) {
-    const maxFrames = 12; // bounded: ~200ms worst case
-    let frame = 0;
-
-    const step = () => {
-      frame += 1;
-      setProseMirrorPlaceholderOnCurrentDom(text);
-      if (frame < maxFrames) requestAnimationFrame(step);
-    };
-
-    requestAnimationFrame(step);
+    // verify at least one stuck
+    return pmRoots.some(
+      (pmEl) => pmEl.getAttribute("data-rotating-placeholder") === text
+    );
   }
 
   function applyRichWithRetries(text) {
-    // A few delayed “wins” + a RAF burst each time
-    applyRichBurst(text);
+    let tries = 0;
+    const maxTries = 60;
+    const delayMs = 80;
 
-    setTimeout(() => applyRichBurst(text), 80);
-    setTimeout(() => applyRichBurst(text), 200);
-    setTimeout(() => applyRichBurst(text), 500);
-    setTimeout(() => applyRichBurst(text), 1200);
-    setTimeout(() => applyRichBurst(text), 2500);
+    const tick = () => {
+      tries += 1;
+      if (setProseMirrorRootPlaceholderOnce(text)) return;
+      if (tries < maxTries) setTimeout(tick, delayMs);
+    };
 
-    // One tiny log so you can confirm rich roots are found (should not spam)
-    // eslint-disable-next-line no-console
-    console.info("[rotating-composer-placeholder] PM roots:",
-      document.querySelectorAll(".ProseMirror.d-editor-input").length
-    );
+    tick();
+    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 150);
+    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 500);
+    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 1200);
+    setTimeout(() => setProseMirrorRootPlaceholderOnce(text), 2500);
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // Apply to both (safe, bounded)
     applyMarkdownWithRetries(text);
     applyRichWithRetries(text);
   }
