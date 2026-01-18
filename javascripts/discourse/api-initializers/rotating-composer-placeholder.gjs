@@ -9,37 +9,43 @@ export default apiInitializer("1.0", (api) => {
 
   function setComposerPlaceholderWithRetries(text) {
     let tries = 0;
-    const maxTries = 12;
-    const delayMs = 50;
+    const maxTries = 15;
+    const delayMs = 80;
 
     const attempt = () => {
       tries += 1;
 
-      const el = document.querySelector("textarea.d-editor-input");
+      const all = Array.from(document.querySelectorAll("textarea"));
+      const editorAll = Array.from(document.querySelectorAll("textarea.d-editor-input"));
+
+      // eslint-disable-next-line no-console
+      console.log(
+        `[rotating-composer-placeholder] try ${tries}`,
+        { totalTextareas: all.length, editorTextareas: editorAll.length },
+        editorAll.map((t) => ({
+          placeholder: t.getAttribute("placeholder"),
+          inComposer: !!t.closest(".composer"),
+          visible: t.offsetParent !== null,
+          classes: t.className
+        }))
+      );
+
+      // Prefer visible composer editor textarea
+      const el =
+        editorAll.find((t) => t.closest(".composer") && t.offsetParent !== null) ||
+        editorAll[0];
+
       if (el) {
         el.setAttribute("placeholder", text);
         return;
       }
 
-      if (tries < maxTries) {
-        setTimeout(attempt, delayMs);
-      }
+      if (tries < maxTries) setTimeout(attempt, delayMs);
     };
 
-    // Try immediately and then a few times while the composer mounts
     attempt();
-
-    // Try again a little later in case Ember overwrites it after render
-    setTimeout(() => {
-      const el = document.querySelector("textarea.d-editor-input");
-      if (el) el.setAttribute("placeholder", text);
-    }, 250);
-
-    setTimeout(() => {
-      const el = document.querySelector("textarea.d-editor-input");
-      if (el) el.setAttribute("placeholder", text);
-    }, 800);
   }
+
 
   function normalizePlaceholders(value) {
     if (Array.isArray(value)) {
