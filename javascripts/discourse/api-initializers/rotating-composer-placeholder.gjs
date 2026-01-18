@@ -38,38 +38,47 @@ export default apiInitializer("1.0", (api) => {
     const pmEl = document.querySelector(
       ".d-editor .ProseMirror.d-editor-input[contenteditable='true']"
     );
-    const p = pmEl?.querySelector("p");
+    if (!pmEl) return false;
+
+    // ProseMirror may not have created the first paragraph yet
+    const p = pmEl.querySelector("p");
     if (!p) return false;
 
-    // Leave Discourse's data-placeholder alone (it will keep resetting it),
-    // but set our own attribute that CSS will display.
     p.setAttribute("data-rotating-placeholder", text);
-
-    // Optional accessibility
     pmEl.setAttribute("aria-label", text);
-
     return true;
   }
+
 
   function applyPlaceholderOnce(text) {
     if (setMarkdownPlaceholder(text)) return true;
     return setProseMirrorRotatingPlaceholder(text);
   }
 
-  function applyWithRetries(text) {
-    // No observers. Just a few delayed passes for mount timing.
-    applyPlaceholderOnce(text);
-    setTimeout(() => applyPlaceholderOnce(text), 80);
-    setTimeout(() => applyPlaceholderOnce(text), 200);
-    setTimeout(() => applyPlaceholderOnce(text), 500);
-    setTimeout(() => applyPlaceholderOnce(text), 1000);
-    setTimeout(() => applyPlaceholderOnce(text), 2000);
+  function applyRichWithRetries(text) {
+    let tries = 0;
+    const maxTries = 30; // ~2.4s at 80ms
+    const delayMs = 80;
+
+    const tick = () => {
+      tries += 1;
+
+      if (setProseMirrorRotatingPlaceholder(text)) return;
+      if (tries < maxTries) setTimeout(tick, delayMs);
+    };
+
+    tick();
   }
 
-  function applyRandomPlaceholder() {
-    const placeholders = getPlaceholdersFromSettings();
-    applyWithRetries(pickRandom(placeholders));
+
+  function applyWithRetries(text) {
+    // markdown attempt
+    if (setMarkdownPlaceholder(text)) return;
+
+    // rich attempt (wait until <p> exists)
+    applyRichWithRetries(text);
   }
+
 
   api.onAppEvent("composer:inserted", () => {
     try {
