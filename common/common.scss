@@ -1,35 +1,25 @@
-// Rich editor (ProseMirror):
-// Use our custom attribute for the placeholder text when present,
-// otherwise fall back to Discourse's default data-placeholder.
-
-.d-editor .ProseMirror.d-editor-input p.is-empty::before,
-.d-editor .ProseMirror.d-editor-input p:empty::before,
-.d-editor .ProseMirror.d-editor-input p[data-placeholder]::before {
-  content: attr(data-rotating-placeholder);
-}
-
-.d-editor .ProseMirror.d-editor-input p.is-empty:not([data-rotating-placeholder])::before,
-.d-editor .ProseMirror.d-editor-input p:empty:not([data-rotating-placeholder])::before,
-.d-editor .ProseMirror.d-editor-input p[data-placeholder]:not([data-rotating-placeholder])::before {
-  content: attr(data-placeholder);
-}
-
-// Discourse ProseMirror placeholder selector used in many builds (2026.x)
-.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child::before {
-  content: attr(data-rotating-placeholder) !important;
-}
-
-.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child:not([data-rotating-placeholder])::before {
-  content: attr(data-placeholder) !important;
-}
+// ProseMirror placeholder: keep it simple.
+// Discourse draws placeholder via ::before on the empty first paragraph.
+// We keep Discourse's selector, but source the text from the ProseMirror ROOT attribute.
 
 .d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child::before {
   content: attr(data-rotating-placeholder) !important;
 }
-.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child:not([data-rotating-placeholder])::before {
-  content: attr(data-placeholder) !important;
+
+// The attr() is read from the element that owns ::before (the <p>),
+// so we copy the root attribute down via CSS using a custom property.
+// Step 1: put the rotated text into a CSS var on the root.
+.d-editor .ProseMirror.d-editor-input[data-rotating-placeholder] {
+  --rcp-placeholder: attr(data-rotating-placeholder);
 }
 
+// Step 2: have the <p>::before use the CSS var.
+.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child::before {
+  content: var(--rcp-placeholder) !important;
+}
 
-
-
+// Fallback to Discourse default if our root attribute isn't present
+.d-editor .ProseMirror.d-editor-input:not([data-rotating-placeholder])
+  p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder) !important;
+}
