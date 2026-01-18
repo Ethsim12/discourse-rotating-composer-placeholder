@@ -10,11 +10,18 @@ export default apiInitializer("1.0", (api) => {
 
   const FALLBACK = ["Write your reply…"];
 
-  // These are the keys you proved exist on your build
-  const KEYS = ["composer.reply_placeholder", "js.composer.reply_placeholder"];
+  // Keys we will override at runtime
+  const KEYS = [
+    // Markdown composer (your earlier discovery)
+    "composer.reply_placeholder",
+    "js.composer.reply_placeholder",
 
-  // originals = Map key -> original string
-  let originals = null;
+    // Rich Text Editor (your new discovery)
+    "js.composer.reply_placeholder_rte",
+    "js.composer.reply_placeholder_rte_no_images",
+  ];
+
+  let originals = null; // { key: originalString }
   let lastApplied = null;
 
   function pickRandom(arr) {
@@ -39,7 +46,7 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // ---- helpers for nested I18n keys ----
+  // ---- nested i18n helpers ----
   function localeRoot() {
     return I18n.translations[I18n.currentLocale()];
   }
@@ -61,14 +68,6 @@ export default apiInitializer("1.0", (api) => {
     cur[parts[parts.length - 1]] = value;
   }
 
-  // ---- Markdown (still direct) ----
-  function setMarkdownPlaceholder(text) {
-    const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
-    if (!els.length) return false;
-    els.forEach((el) => el.setAttribute("placeholder", text));
-    return true;
-  }
-
   function captureOriginalsOnce() {
     if (originals) return;
 
@@ -81,22 +80,21 @@ export default apiInitializer("1.0", (api) => {
     });
   }
 
-  function applyRichPlaceholder(text) {
+  function applyI18nOverride(text) {
     captureOriginalsOnce();
-    if (!originals || lastApplied === text) return;
+    if (!originals) return;
+    if (lastApplied === text) return;
 
     const root = localeRoot();
 
-    KEYS.forEach((k) => {
-      if (k in originals) {
-        setDeep(root, k, text);
-      }
+    Object.keys(originals).forEach((k) => {
+      setDeep(root, k, text);
     });
 
     lastApplied = text;
   }
 
-  function restoreRichPlaceholder() {
+  function restoreI18n() {
     if (!originals) return;
 
     const root = localeRoot();
@@ -106,19 +104,27 @@ export default apiInitializer("1.0", (api) => {
     lastApplied = null;
   }
 
+  // ---- Markdown textarea (still helps when markdown composer is used) ----
+  function setMarkdownPlaceholder(text) {
+    const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
+    if (!els.length) return false;
+    els.forEach((el) => el.setAttribute("placeholder", text));
+    return true;
+  }
+
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // markdown (cheap)
-    setMarkdownPlaceholder(text);
+    // Update translation sources (rich + markdown keys)
+    applyI18nOverride(text);
 
-    // rich (update translation source)
-    applyRichPlaceholder(text);
+    // Also set textarea placeholder directly (markdown mode)
+    setMarkdownPlaceholder(text);
   }
 
+  // A few bounded passes to catch mount/toggle; then stop.
   function scheduleApply() {
-    // a few bounded passes to catch composer mount/toggle
     setTimeout(applyRandomPlaceholder, 0);
     setTimeout(applyRandomPlaceholder, 150);
     setTimeout(applyRandomPlaceholder, 500);
@@ -129,6 +135,6 @@ export default apiInitializer("1.0", (api) => {
   api.onAppEvent("composer:inserted", scheduleApply);
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
 
-  api.onAppEvent?.("composer:closed", restoreRichPlaceholder);
-  api.onPageChange(() => restoreRichPlaceholder());
+  api.onAppEvent?.("composer:closed", restoreI18n);
+  api.onPageChange(() => restoreI18n());
 });
