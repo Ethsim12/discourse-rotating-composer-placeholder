@@ -1,10 +1,8 @@
 rotating_placeholders:
   type: list
   list_type: simple
-  default:
-    - "What did you try? Include steps to reproduce."
-    - "One idea per reply — start a new topic for new issues."
-    - "Please include expected vs actual behaviour."
+  default: "What did you try? Include steps to reproduce.|One idea per reply — start a new topic for new issues.|Please include expected vs actual behaviour."
   description: "List of possible composer placeholder texts."
+
 
 
