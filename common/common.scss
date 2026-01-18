@@ -1,25 +1,2 @@
-// ProseMirror placeholder: keep it simple.
-// Discourse draws placeholder via ::before on the empty first paragraph.
-// We keep Discourse's selector, but source the text from the ProseMirror ROOT attribute.
-
-.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child::before {
-  content: attr(data-rotating-placeholder) !important;
-}
-
-// The attr() is read from the element that owns ::before (the <p>),
-// so we copy the root attribute down via CSS using a custom property.
-// Step 1: put the rotated text into a CSS var on the root.
-.d-editor .ProseMirror.d-editor-input[data-rotating-placeholder] {
-  --rcp-placeholder: attr(data-rotating-placeholder);
-}
-
-// Step 2: have the <p>::before use the CSS var.
-.d-editor .ProseMirror.d-editor-input p.is-editor-empty:first-child::before {
-  content: var(--rcp-placeholder) !important;
-}
-
-// Fallback to Discourse default if our root attribute isn't present
-.d-editor .ProseMirror.d-editor-input:not([data-rotating-placeholder])
-  p.is-editor-empty:first-child::before {
-  content: attr(data-placeholder) !important;
-}
+// Rotating Composer Placeholder
+// No CSS required when we rewrite ProseMirror's p[data-placeholder] directly.
