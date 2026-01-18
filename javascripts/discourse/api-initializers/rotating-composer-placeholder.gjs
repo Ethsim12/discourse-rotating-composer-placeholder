@@ -52,7 +52,9 @@ export default apiInitializer("1.0", (api) => {
 
     p.setAttribute("data-rotating-placeholder", text);
     pmEl.setAttribute("aria-label", text);
-    return true;
+
+    // verify it actually stuck (helps avoid false positives while PM is still initializing)
+    return p.getAttribute("data-rotating-placeholder") === text;
   }
 
   function applyMarkdownWithRetries(text) {
@@ -74,7 +76,7 @@ export default apiInitializer("1.0", (api) => {
 
   function applyRichWithRetries(text) {
     let tries = 0;
-    const maxTries = 30;
+    const maxTries = 60; // ~4.8s
     const delayMs = 80;
 
     const tick = () => {
