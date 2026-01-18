@@ -2,14 +2,16 @@ import { apiInitializer } from "discourse/lib/api";
 import I18n from "I18n";
 
 export default apiInitializer("1.0", (api) => {
+  // PROOF this file is loaded (remove later)
   document.documentElement.setAttribute(
     "data-rotating-composer-placeholder-loaded",
     "1"
   );
 
   const FALLBACK = ["Write your reply…"];
+  const KEYS = ["composer.reply_placeholder", "js.composer.reply_placeholder"];
 
-  let originalPlaceholder = null;
+  let originals = null; // { key: originalString }
   let lastApplied = null;
 
   function pickRandom(arr) {
@@ -34,7 +36,7 @@ export default apiInitializer("1.0", (api) => {
     return raw.length ? raw : FALLBACK;
   }
 
-  // Markdown still set directly (works)
+  // ---- Markdown (textarea) ----
   function setMarkdownPlaceholder(text) {
     const els = Array.from(document.querySelectorAll("textarea.d-editor-input"));
     if (!els.length) return false;
@@ -42,80 +44,74 @@ export default apiInitializer("1.0", (api) => {
     return true;
   }
 
-  // ---- Rich editor uses an i18n key for its placeholder text ----
-  // We override it temporarily.
-  //
-  // NOTE: key name can vary. We try a few known candidates.
-  const PLACEHOLDER_KEYS = [
-    "composer.placeholder", // common pattern
-    "composer.reply_placeholder", // classic js.composer.reply_placeholder equivalent
-    "js.composer.reply_placeholder", // site text key you referenced earlier
-    "composer.composer_placeholder", // fallback candidate
-  ];
-
-  function findFirstExistingKey() {
-    for (const k of PLACEHOLDER_KEYS) {
-      const v = I18n.t(k, { defaultValue: null });
-      if (v && typeof v === "string" && v.length) return k;
-    }
-    return null;
+  // ---- Rich editor (i18n-driven placeholder) ----
+  function currentLocaleTranslations() {
+    // In Discourse, this is the object backing I18n.t() for the current locale
+    return I18n.translations[I18n.currentLocale()];
   }
 
-  const placeholderKey = findFirstExistingKey();
+  function captureOriginalsOnce() {
+    if (originals) return;
+
+    originals = {};
+    KEYS.forEach((k) => {
+      const v = I18n.t(k, { defaultValue: null });
+      if (typeof v === "string") originals[k] = v;
+    });
+  }
 
   function applyRichPlaceholder(text) {
-    if (!placeholderKey) return false;
+    captureOriginalsOnce();
+    if (lastApplied === text) return;
 
-    if (originalPlaceholder === null) {
-      originalPlaceholder = I18n.t(placeholderKey);
-    }
+    const t = currentLocaleTranslations();
 
-    // Avoid repeated writes
-    if (lastApplied === text) return true;
+    // Update both keys (they’re currently identical on your build)
+    KEYS.forEach((k) => {
+      if (k in originals) {
+        t[k] = text;
+      }
+    });
 
-    // Override translation lookup
-    I18n.translations[I18n.currentLocale()][placeholderKey] = text;
     lastApplied = text;
-
-    return true;
   }
 
   function restoreRichPlaceholder() {
-    if (!placeholderKey) return;
+    if (!originals) return;
 
-    if (originalPlaceholder !== null) {
-      I18n.translations[I18n.currentLocale()][placeholderKey] = originalPlaceholder;
-    }
+    const t = currentLocaleTranslations();
+    Object.keys(originals).forEach((k) => {
+      t[k] = originals[k];
+    });
+
     lastApplied = null;
-    originalPlaceholder = null;
+    originals = null;
   }
 
   function applyRandomPlaceholder() {
     const placeholders = getPlaceholdersFromSettings();
     const text = pickRandom(placeholders);
 
-    // markdown
+    // markdown (cheap, harmless even if hidden)
     setMarkdownPlaceholder(text);
 
-    // rich (via i18n)
+    // rich (this is what the ProseMirror placeholder is actually reading)
     applyRichPlaceholder(text);
   }
 
+  // In 2026.x the composer DOM/instance can come in after the event, so do a few bounded passes
   function scheduleApply() {
     setTimeout(applyRandomPlaceholder, 0);
     setTimeout(applyRandomPlaceholder, 150);
     setTimeout(applyRandomPlaceholder, 500);
+    setTimeout(applyRandomPlaceholder, 1200);
   }
 
   api.onAppEvent("composer:opened", scheduleApply);
   api.onAppEvent("composer:inserted", scheduleApply);
   api.onAppEvent("composer:reply-reloaded", scheduleApply);
 
-  api.onAppEvent?.("composer:closed", () => {
-    restoreRichPlaceholder();
-  });
-
-  api.onPageChange(() => {
-    restoreRichPlaceholder();
-  });
+  // cleanup
+  api.onAppEvent?.("composer:closed", restoreRichPlaceholder);
+  api.onPageChange(() => restoreRichPlaceholder());
 });
